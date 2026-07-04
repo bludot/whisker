@@ -12,6 +12,32 @@ npm run dev
 
 Boards persist locally in your browser (IndexedDB) automatically.
 
+### Setup on macOS
+
+```sh
+# 1. Node 20+ (skip if you already have it)
+brew install node          # or: nvm install --lts
+
+# 2. Clone and run
+git clone git@github.com:bludot/whisker.git
+cd whisker
+npm install
+npm run dev                # http://localhost:5173
+```
+
+Useful variants:
+
+```sh
+npm run dev -- --host      # expose on your LAN (test from an iPad/phone)
+npm run build              # type-check + production build into dist/
+npm run preview            # serve the production build locally
+```
+
+To test on an iPad, run with `--host`, then open the `Network:` URL Vite
+prints (Mac and iPad must be on the same Wi-Fi). Boards are stored per
+browser — they don't follow you between devices yet (multiplayer is on
+the roadmap).
+
 ## Tools & shortcuts
 
 | Tool / action     | How                                                       |
