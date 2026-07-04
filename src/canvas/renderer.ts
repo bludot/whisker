@@ -1,0 +1,671 @@
+import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 'pixi.js'
+import { Camera } from './camera'
+import {
+  CANVAS_COLORS,
+  effectiveTheme,
+  labelColor,
+  subscribeTheme,
+  themedColor,
+} from '../ui/theme'
+import type { Editor } from '../editor/Editor'
+import {
+  boundsOf,
+  boundsUnion,
+  connectorEndpoints,
+  connectorPath,
+  denormalizedPoints,
+  isResizable,
+  type Bounds,
+  type ConnectorShape,
+  type EllipseShape,
+  type Point,
+  type RectShape,
+  type Shape,
+  type ShapeResolver,
+  type StickyShape,
+} from '../scene/types'
+
+const GRID_SPACING = 32
+const ACCENT = 0x6366f1
+export const HANDLE_IDS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const
+export type HandleId = (typeof HANDLE_IDS)[number]
+
+/**
+ * WebGL board renderer. Owns the Pixi application and the camera; reads
+ * shapes from the store and session state from the Editor, and redraws
+ * when either changes. Knows nothing about React or input handling.
+ */
+export class BoardRenderer {
+  readonly app = new Application()
+  readonly camera = new Camera()
+
+  private grid = new Graphics()
+  private world = new Container()
+  private overlay = new Graphics()
+
+  marquee: Bounds | null = null
+  drawPreview: { points: number[]; color: number } | null = null
+  connectPreview: { a: Point; b: Point } | null = null
+  snapGuides: { v: number[]; h: number[] } | null = null
+  /** Equal-spacing indicators shown while a drag snaps to distribution. */
+  spacingGuides: { a: Point; b: Point }[] | null = null
+  anchorDots: { candidates: Point[]; active: Point | null } | null = null
+  /** Drag-out arrow handles shown while hovering a shape with the select
+   *  tool. Only the shape id and active anchor are stored; positions are
+   *  recomputed on every redraw so the dots track the live shape. */
+  arrowHandles: { shapeId: string; active: Point | null } | null = null
+  createPreview: {
+    type: 'sticky' | 'rect' | 'ellipse'
+    bounds: Bounds
+    color: number
+  } | null = null
+
+  private editor: Editor
+  private unsubscribers: (() => void)[] = []
+  private cameraListeners = new Set<() => void>()
+
+  constructor(editor: Editor) {
+    this.editor = editor
+  }
+
+  async init(host: HTMLElement): Promise<void> {
+    await this.app.init({
+      background: CANVAS_COLORS[effectiveTheme()].background,
+      resizeTo: host,
+      antialias: true,
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true,
+    })
+    host.appendChild(this.app.canvas)
+    this.app.stage.addChild(this.grid, this.world, this.overlay)
+
+    this.unsubscribers = [
+      this.editor.store.subscribe(() => {
+        this.drawShapes()
+        this.drawOverlay()
+      }),
+      this.editor.subscribe(() => {
+        this.drawShapes()
+        this.drawOverlay()
+      }),
+      subscribeTheme(() => {
+        this.app.renderer.background.color =
+          CANVAS_COLORS[effectiveTheme()].background
+        this.drawGrid()
+        this.drawShapes() // label colors depend on the canvas background
+      }),
+    ]
+    this.app.renderer.on('resize', () => this.applyCamera())
+    this.drawShapes()
+    this.applyCamera()
+  }
+
+  /** Call after any camera mutation. */
+  applyCamera(): void {
+    const { zoom } = this.camera
+    for (const c of [this.world, this.overlay]) {
+      c.scale.set(zoom)
+      c.position.set(-this.camera.x * zoom, -this.camera.y * zoom)
+    }
+    this.drawGrid()
+    this.drawOverlay()
+    this.cameraListeners.forEach((fn) => fn())
+  }
+
+  subscribeCamera(fn: () => void): () => void {
+    this.cameraListeners.add(fn)
+    return () => this.cameraListeners.delete(fn)
+  }
+
+  zoomStep(factor: number): void {
+    const { width, height } = this.app.screen
+    this.camera.zoomAt(width / 2, height / 2, factor)
+    this.applyCamera()
+  }
+
+  resetZoom(): void {
+    const { width, height } = this.app.screen
+    const c = this.camera.screenToWorld(width / 2, height / 2)
+    this.camera.zoom = 1
+    this.camera.x = c.x - width / 2
+    this.camera.y = c.y - height / 2
+    this.applyCamera()
+  }
+
+  zoomToFit(): void {
+    const get: ShapeResolver = (id) => this.editor.store.get(id)
+    const all = this.editor.store.getAll()
+    const bounds = boundsUnion(all.map((s) => boundsOf(s, get)))
+    if (!bounds) return
+    const { width, height } = this.app.screen
+    const PAD = 80
+    this.camera.zoom = Math.min(
+      Camera.MAX_ZOOM,
+      Math.max(
+        Camera.MIN_ZOOM,
+        Math.min(
+          width / (bounds.width + PAD * 2),
+          height / (bounds.height + PAD * 2),
+        ),
+      ),
+    )
+    this.camera.x = bounds.x + bounds.width / 2 - width / 2 / this.camera.zoom
+    this.camera.y = bounds.y + bounds.height / 2 - height / 2 / this.camera.zoom
+    this.applyCamera()
+  }
+
+  /** Screen-constant sizes expressed in world units. */
+  worldPx(px: number): number {
+    return px / this.camera.zoom
+  }
+
+  handlePositions(b: Bounds): Record<HandleId, Point> {
+    const mx = b.x + b.width / 2
+    const my = b.y + b.height / 2
+    return {
+      nw: { x: b.x, y: b.y },
+      n: { x: mx, y: b.y },
+      ne: { x: b.x + b.width, y: b.y },
+      e: { x: b.x + b.width, y: my },
+      se: { x: b.x + b.width, y: b.y + b.height },
+      s: { x: mx, y: b.y + b.height },
+      sw: { x: b.x, y: b.y + b.height },
+      w: { x: b.x, y: my },
+    }
+  }
+
+  /** The four drag-out arrow handles floating just outside a shape,
+   *  computed from its current bounds. */
+  arrowHandlePositions(shape: Shape): { anchor: Point; world: Point }[] {
+    const gap = this.worldPx(18)
+    const b = boundsOf(shape, (id) => this.editor.store.get(id))
+    const cx = b.x + b.width / 2
+    const cy = b.y + b.height / 2
+    return [
+      { anchor: { x: 0.5, y: 0 }, world: { x: cx, y: b.y - gap } },
+      { anchor: { x: 1, y: 0.5 }, world: { x: b.x + b.width + gap, y: cy } },
+      { anchor: { x: 0.5, y: 1 }, world: { x: cx, y: b.y + b.height + gap } },
+      { anchor: { x: 0, y: 0.5 }, world: { x: b.x - gap, y: cy } },
+    ]
+  }
+
+  /** Bounds of the resizable part of the selection, or null. */
+  selectionBounds(): Bounds | null {
+    const get: ShapeResolver = (id) => this.editor.store.get(id)
+    const resizable = this.editor.getSelectedShapes().filter(isResizable)
+    return boundsUnion(resizable.map((s) => boundsOf(s, get)))
+  }
+
+  destroy(): void {
+    this.unsubscribers.forEach((fn) => fn())
+    this.cameraListeners.clear()
+    this.app.destroy(true, { children: true })
+  }
+
+  private drawShapes(): void {
+    // Scaffold-simple: rebuild the whole scene on every document change.
+    // Swap for keyed incremental updates once boards get large.
+    const get: ShapeResolver = (id) => this.editor.store.get(id)
+    this.world.removeChildren().forEach((c) => c.destroy({ children: true }))
+    const onTextureReady = () => {
+      if (this.app.renderer) {
+        this.drawShapes()
+        this.drawOverlay()
+      }
+    }
+    for (const shape of this.editor.store.getAll()) {
+      this.world.addChild(
+        buildShape(shape, get, this.editor.editingId, onTextureReady),
+      )
+    }
+  }
+
+  private drawOverlay(): void {
+    const o = this.overlay
+    o.clear()
+    const get: ShapeResolver = (id) => this.editor.store.get(id)
+    const thin = this.worldPx(1.5)
+
+    const selected = this.editor.getSelectedShapes()
+    for (const s of selected) {
+      if (s.type === 'connector') {
+        // Highlight the line itself; a bounds box around a diagonal
+        // arrow reads as noise.
+        const pts = connectorPath(s, get)
+        o.moveTo(pts[0].x, pts[0].y)
+        for (let i = 1; i < pts.length; i++) o.lineTo(pts[i].x, pts[i].y)
+        o.stroke({ color: ACCENT, width: thin, alpha: 0.6 })
+        continue
+      }
+      const b = boundsOf(s, get)
+      o.rect(b.x, b.y, b.width, b.height).stroke({
+        color: ACCENT,
+        width: thin,
+      })
+    }
+
+    // Draggable endpoint handles on a lone selected connector.
+    if (selected.length === 1 && selected[0].type === 'connector') {
+      const { a, b } = connectorEndpoints(selected[0], get)
+      const r = this.worldPx(5)
+      for (const p of [a, b]) {
+        o.circle(p.x, p.y, r)
+          .fill(0xffffff)
+          .stroke({ color: ACCENT, width: thin })
+      }
+    }
+
+    const rb = this.selectionBounds()
+    if (rb) {
+      const size = this.worldPx(10)
+      for (const p of Object.values(this.handlePositions(rb))) {
+        o.rect(p.x - size / 2, p.y - size / 2, size, size)
+          .fill(0xffffff)
+          .stroke({ color: ACCENT, width: thin })
+      }
+    }
+
+    if (this.marquee) {
+      const m = this.marquee
+      o.rect(m.x, m.y, m.width, m.height)
+        .fill({ color: ACCENT, alpha: 0.08 })
+        .stroke({ color: ACCENT, width: this.worldPx(1) })
+    }
+
+    if (this.drawPreview && this.drawPreview.points.length >= 4) {
+      const pts = this.drawPreview.points
+      o.moveTo(pts[0], pts[1])
+      for (let i = 2; i < pts.length; i += 2) o.lineTo(pts[i], pts[i + 1])
+      o.stroke({
+        color: themedColor(this.drawPreview.color),
+        width: 4,
+        cap: 'round',
+        join: 'round',
+      })
+    }
+
+    if (this.connectPreview) {
+      drawArrow(o, this.connectPreview.a, this.connectPreview.b, ACCENT, 1, 3)
+    }
+
+    if (this.createPreview) {
+      const { type, bounds: b } = this.createPreview
+      const color = themedColor(this.createPreview.color)
+      if (type === 'ellipse') {
+        o.ellipse(b.x + b.width / 2, b.y + b.height / 2, b.width / 2, b.height / 2)
+          .fill({ color, alpha: 0.15 })
+          .stroke({ color, width: 2 })
+      } else {
+        o.rect(b.x, b.y, b.width, b.height)
+          .fill({ color, alpha: type === 'sticky' ? 0.5 : 0.15 })
+          .stroke({ color, width: 2 })
+      }
+    }
+
+    if (this.anchorDots) {
+      const r = this.worldPx(4)
+      for (const p of this.anchorDots.candidates) {
+        o.circle(p.x, p.y, r)
+          .fill({ color: 0xffffff, alpha: 0.9 })
+          .stroke({ color: ACCENT, width: thin })
+      }
+      if (this.anchorDots.active) {
+        o.circle(this.anchorDots.active.x, this.anchorDots.active.y, this.worldPx(6))
+          .fill(ACCENT)
+      }
+    }
+
+    if (this.arrowHandles) {
+      const shape = get(this.arrowHandles.shapeId)
+      if (shape && shape.type !== 'connector') {
+        const active = this.arrowHandles.active
+        const r = this.worldPx(5)
+        for (const h of this.arrowHandlePositions(shape)) {
+          if (active && h.anchor.x === active.x && h.anchor.y === active.y) {
+            o.circle(h.world.x, h.world.y, this.worldPx(6.5)).fill(ACCENT)
+          } else {
+            o.circle(h.world.x, h.world.y, r)
+              .fill({ color: 0xffffff, alpha: 0.9 })
+              .stroke({ color: ACCENT, width: thin, alpha: 0.7 })
+          }
+        }
+      }
+    }
+
+    if (this.snapGuides) {
+      const view = {
+        x: this.camera.x,
+        y: this.camera.y,
+        w: this.app.screen.width / this.camera.zoom,
+        h: this.app.screen.height / this.camera.zoom,
+      }
+      const w = this.worldPx(1)
+      for (const x of this.snapGuides.v) {
+        o.moveTo(x, view.y)
+          .lineTo(x, view.y + view.h)
+          .stroke({ color: 0xec4899, width: w })
+      }
+      for (const y of this.snapGuides.h) {
+        o.moveTo(view.x, y)
+          .lineTo(view.x + view.w, y)
+          .stroke({ color: 0xec4899, width: w })
+      }
+    }
+
+    if (this.spacingGuides) {
+      const w = this.worldPx(1.5)
+      const tick = this.worldPx(5)
+      for (const s of this.spacingGuides) {
+        o.moveTo(s.a.x, s.a.y).lineTo(s.b.x, s.b.y)
+        const horizontal = Math.abs(s.b.y - s.a.y) < 0.01
+        for (const p of [s.a, s.b]) {
+          if (horizontal) o.moveTo(p.x, p.y - tick).lineTo(p.x, p.y + tick)
+          else o.moveTo(p.x - tick, p.y).lineTo(p.x + tick, p.y)
+        }
+      }
+      o.stroke({ color: 0xec4899, width: w })
+    }
+  }
+
+  redrawOverlay(): void {
+    this.drawOverlay()
+  }
+
+  private drawGrid(): void {
+    this.grid.clear()
+    if (this.camera.zoom < 0.4) return // dots would be sub-pixel noise
+
+    const { width, height } = this.app.screen
+    const spacing = GRID_SPACING * this.camera.zoom
+    const offsetX = -((this.camera.x * this.camera.zoom) % spacing)
+    const offsetY = -((this.camera.y * this.camera.zoom) % spacing)
+
+    for (let x = offsetX; x < width; x += spacing) {
+      for (let y = offsetY; y < height; y += spacing) {
+        this.grid.circle(x, y, 1.5)
+      }
+    }
+    this.grid.fill(CANVAS_COLORS[effectiveTheme()].grid)
+  }
+}
+
+function drawArrow(
+  g: Graphics,
+  a: Point,
+  b: Point,
+  color: number,
+  alpha: number,
+  width: number,
+): void {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len = Math.hypot(dx, dy)
+  if (len < 1) return
+  const ux = dx / len
+  const uy = dy / len
+  const head = Math.min(14, len / 2)
+  const base = { x: b.x - ux * head, y: b.y - uy * head }
+  const px = -uy
+  const py = ux
+  g.moveTo(a.x, a.y)
+    .lineTo(base.x, base.y)
+    .stroke({ color, alpha, width, cap: 'round' })
+  g.poly([
+    b.x,
+    b.y,
+    base.x + px * (head / 2),
+    base.y + py * (head / 2),
+    base.x - px * (head / 2),
+    base.y - py * (head / 2),
+  ]).fill({ color, alpha })
+}
+
+/** Textures for image shapes, keyed by data URL. `null` = loading. */
+const textureCache = new Map<string, Texture | null>()
+
+function buildShape(
+  shape: Shape,
+  get: ShapeResolver,
+  editingId: string | null,
+  onTextureReady: () => void,
+): Container {
+  const node = new Container()
+  const g = new Graphics()
+  node.addChild(g)
+  if (shape.type !== 'connector') node.position.set(shape.x, shape.y)
+
+  const addLabel = (s: StickyShape | RectShape | EllipseShape) => {
+    if (!s.text || s.id === editingId) return
+    const alignH = s.textAlign ?? 'center'
+    const alignV = s.textVAlign ?? 'middle'
+    const fontSize = s.fontSize ?? 16
+    const label = new Text({
+      text: s.text,
+      style: {
+        fontFamily: 'system-ui, sans-serif',
+        fontSize,
+        // Match the text editor's line-height so entering/leaving edit
+        // mode doesn't shift the text.
+        lineHeight: fontSize * 1.3,
+        fontWeight: s.bold ? '700' : '400',
+        fill: labelColor(s.fillColor, s.fillOpacity),
+        wordWrap: true,
+        wordWrapWidth: Math.max(16, s.width - 24),
+        align: alignH,
+      },
+    })
+    const ax = alignH === 'left' ? 0 : alignH === 'center' ? 0.5 : 1
+    const ay = alignV === 'top' ? 0 : alignV === 'middle' ? 0.5 : 1
+    label.anchor.set(ax, ay)
+    label.position.set(
+      alignH === 'left' ? 12 : alignH === 'center' ? s.width / 2 : s.width - 12,
+      alignV === 'top' ? 12 : alignV === 'middle' ? s.height / 2 : s.height - 12,
+    )
+    node.addChild(label)
+  }
+
+  const fill = { color: themedColor(shape.fillColor), alpha: shape.fillOpacity }
+  const stroke = {
+    color: themedColor(shape.strokeColor),
+    alpha: shape.strokeOpacity,
+    width: shape.strokeWidth,
+  }
+
+  switch (shape.type) {
+    case 'sticky':
+    case 'rect': {
+      g.rect(0, 0, shape.width, shape.height).fill(fill)
+      if (stroke.width > 0) {
+        g.rect(0, 0, shape.width, shape.height).stroke(stroke)
+      }
+      addLabel(shape)
+      break
+    }
+    case 'ellipse': {
+      g.ellipse(shape.width / 2, shape.height / 2, shape.width / 2, shape.height / 2)
+        .fill(fill)
+        .stroke(stroke)
+      addLabel(shape)
+      break
+    }
+    case 'draw': {
+      const pts = denormalizedPoints(shape)
+      if (pts.length >= 4) {
+        g.moveTo(pts[0] - shape.x, pts[1] - shape.y)
+        for (let i = 2; i < pts.length; i += 2) {
+          g.lineTo(pts[i] - shape.x, pts[i + 1] - shape.y)
+        }
+        g.stroke({ ...stroke, cap: 'round', join: 'round' })
+      }
+      break
+    }
+    case 'connector': {
+      drawConnector(g, connectorPath(shape, get), shape)
+      break
+    }
+    case 'image': {
+      const cached = textureCache.get(shape.src)
+      if (cached) {
+        const sprite = new Sprite(cached)
+        sprite.width = shape.width
+        sprite.height = shape.height
+        node.addChild(sprite)
+      } else {
+        // Loading placeholder; redraw once the texture arrives.
+        g.rect(0, 0, shape.width, shape.height).fill({
+          color: 0x94a3b8,
+          alpha: 0.15,
+        })
+        if (!textureCache.has(shape.src)) {
+          textureCache.set(shape.src, null)
+          Assets.load<Texture>(shape.src)
+            .then((tex) => {
+              textureCache.set(shape.src, tex)
+              onTextureReady()
+            })
+            .catch(() => textureCache.delete(shape.src))
+        }
+      }
+      if (stroke.width > 0) {
+        const border = new Graphics()
+        border.rect(0, 0, shape.width, shape.height).stroke(stroke)
+        node.addChild(border)
+      }
+      break
+    }
+  }
+  return node
+}
+
+/** Split a polyline into drawn sub-paths following a dash pattern. */
+function dashedSubpaths(
+  pts: Point[],
+  dashLen: number,
+  gapLen: number,
+): Point[][] {
+  const out: Point[][] = []
+  let current: Point[] = []
+  let draw = true
+  let remaining = dashLen
+  for (let i = 0; i + 1 < pts.length; i++) {
+    let p = pts[i]
+    const q = pts[i + 1]
+    let segLen = Math.hypot(q.x - p.x, q.y - p.y)
+    if (segLen < 1e-6) continue
+    const ux = (q.x - p.x) / segLen
+    const uy = (q.y - p.y) / segLen
+    while (segLen > 1e-6) {
+      const step = Math.min(remaining, segLen)
+      const np = { x: p.x + ux * step, y: p.y + uy * step }
+      if (draw) {
+        if (current.length === 0) current.push(p)
+        current.push(np)
+      }
+      p = np
+      segLen -= step
+      remaining -= step
+      if (remaining <= 1e-6) {
+        if (draw && current.length > 1) out.push(current)
+        current = []
+        draw = !draw
+        remaining = draw ? dashLen : gapLen
+      }
+    }
+  }
+  if (draw && current.length > 1) out.push(current)
+  return out
+}
+
+/** Points spaced `gap` apart along a polyline (for dotted lines). */
+function sampleAlong(pts: Point[], gap: number): Point[] {
+  const out: Point[] = []
+  let remaining = 0
+  for (let i = 0; i + 1 < pts.length; i++) {
+    let p = pts[i]
+    const q = pts[i + 1]
+    let segLen = Math.hypot(q.x - p.x, q.y - p.y)
+    if (segLen < 1e-6) continue
+    const ux = (q.x - p.x) / segLen
+    const uy = (q.y - p.y) / segLen
+    while (segLen >= remaining) {
+      const np = { x: p.x + ux * remaining, y: p.y + uy * remaining }
+      out.push(np)
+      segLen -= remaining
+      p = np
+      remaining = gap
+    }
+    remaining -= segLen
+  }
+  return out
+}
+
+function unitVec(a: Point, b: Point): Point {
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
+  return { x: (b.x - a.x) / len, y: (b.y - a.y) / len }
+}
+
+function drawConnector(g: Graphics, path: Point[], c: ConnectorShape): void {
+  if (path.length < 2) return
+  const color = themedColor(c.strokeColor)
+  const alpha = c.strokeOpacity
+  const width = Math.max(1, c.strokeWidth)
+  const startHead = c.startHead ?? 'none'
+  const endHead = c.endHead ?? 'arrow'
+  const dash = c.dash ?? 'solid'
+  const headLen = Math.max(10, width * 3.5)
+
+  const tStart = unitVec(path[0], path[1])
+  const tEnd = unitVec(path[path.length - 2], path[path.length - 1])
+
+  // Trim the line under triangular heads so it doesn't poke through.
+  const pts = path.map((p) => ({ ...p }))
+  const first = pts[0]
+  const last = pts[pts.length - 1]
+  if (endHead === 'arrow') {
+    last.x -= tEnd.x * headLen * 0.8
+    last.y -= tEnd.y * headLen * 0.8
+  }
+  if (startHead === 'arrow') {
+    first.x += tStart.x * headLen * 0.8
+    first.y += tStart.y * headLen * 0.8
+  }
+
+  if (dash === 'dotted') {
+    const r = Math.max(1.5, width * 0.75)
+    for (const p of sampleAlong(pts, Math.max(8, width * 3.5))) {
+      g.circle(p.x, p.y, r)
+    }
+    g.fill({ color, alpha })
+  } else {
+    const subpaths =
+      dash === 'dashed'
+        ? dashedSubpaths(pts, Math.max(9, width * 3), Math.max(6, width * 2))
+        : [pts]
+    for (const sp of subpaths) {
+      g.moveTo(sp[0].x, sp[0].y)
+      for (let i = 1; i < sp.length; i++) g.lineTo(sp[i].x, sp[i].y)
+    }
+    g.stroke({ color, alpha, width, cap: 'round', join: 'round' })
+  }
+
+  const drawHead = (tip: Point, dir: Point, kind: string) => {
+    if (kind === 'arrow') {
+      const bx = tip.x - dir.x * headLen
+      const by = tip.y - dir.y * headLen
+      const px = -dir.y
+      const py = dir.x
+      g.poly([
+        tip.x,
+        tip.y,
+        bx + px * (headLen / 2),
+        by + py * (headLen / 2),
+        bx - px * (headLen / 2),
+        by - py * (headLen / 2),
+      ]).fill({ color, alpha })
+    } else if (kind === 'dot') {
+      g.circle(tip.x, tip.y, width * 1.2 + 2).fill({ color, alpha })
+    }
+  }
+  drawHead(path[path.length - 1], tEnd, endHead)
+  drawHead(path[0], { x: -tStart.x, y: -tStart.y }, startHead)
+}

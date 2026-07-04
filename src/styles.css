@@ -1,0 +1,355 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Theme tokens. JS stamps data-theme="light|dark" on <html>. */
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+  --panel-bg: #ffffff;
+  --panel-border: rgba(20, 22, 30, 0.1);
+  --panel-shadow:
+    0 2px 6px rgba(20, 22, 30, 0.08),
+    0 12px 32px rgba(20, 22, 30, 0.1);
+  --icon: #4b5563;
+  --icon-hover: #111827;
+  --hover-bg: rgba(20, 22, 30, 0.07);
+  --open-bg: rgba(20, 22, 30, 0.09);
+  --accent: #6366f1;
+  --on-accent: #ffffff;
+  --divider: rgba(20, 22, 30, 0.12);
+  --caption: #9ca3af;
+  --field-bg: rgba(20, 22, 30, 0.05);
+  --field-border: rgba(20, 22, 30, 0.12);
+  --field-text: #1f2937;
+  --caret: rgba(20, 22, 30, 0.4);
+  --swatch-border: rgba(20, 22, 30, 0.18);
+  --swatch-active-ring: #111827;
+  --danger-bg: rgba(248, 113, 113, 0.16);
+  --danger-text: #b91c1c;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --panel-bg: #1e2028;
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --panel-shadow:
+    0 2px 6px rgba(10, 12, 18, 0.25),
+    0 12px 32px rgba(10, 12, 18, 0.22);
+  --icon: #c0c3cf;
+  --icon-hover: #ffffff;
+  --hover-bg: rgba(255, 255, 255, 0.08);
+  --open-bg: rgba(255, 255, 255, 0.1);
+  --accent: #6366f1;
+  --on-accent: #ffffff;
+  --divider: rgba(255, 255, 255, 0.12);
+  --caption: rgba(255, 255, 255, 0.45);
+  --field-bg: rgba(255, 255, 255, 0.07);
+  --field-border: rgba(255, 255, 255, 0.1);
+  --field-text: #e8eaf1;
+  --caret: rgba(255, 255, 255, 0.4);
+  --swatch-border: rgba(255, 255, 255, 0.2);
+  --swatch-active-ring: #ffffff;
+  --danger-bg: rgba(248, 113, 113, 0.18);
+  --danger-text: #fca5a5;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+  font-family: system-ui, sans-serif;
+}
+
+.app {
+  position: relative;
+  height: 100%;
+}
+
+.canvas-host {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+
+.canvas-host canvas {
+  display: block;
+}
+
+/* Floating chrome: elevated rounded panels over the canvas. */
+
+.toolbar,
+.zoom-controls,
+.style-popup,
+.dd-menu {
+  background: var(--panel-bg);
+  color: var(--icon);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  box-shadow: var(--panel-shadow);
+}
+
+.toolbar,
+.zoom-controls,
+.style-popup {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 6px;
+}
+
+.toolbar {
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.zoom-controls {
+  right: 16px;
+  bottom: 16px;
+}
+
+.toolbar-logo {
+  font-size: 19px;
+  margin: 0 6px 0 4px;
+  user-select: none;
+}
+
+.tool,
+.popup-btn {
+  min-width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  color: var(--icon);
+}
+
+.tool:hover:not(:disabled),
+.popup-btn:hover:not(:disabled) {
+  background: var(--hover-bg);
+  color: var(--icon-hover);
+}
+
+.tool.active,
+.popup-btn.active {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.tool:disabled,
+.popup-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.tool.danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.divider {
+  width: 1px;
+  height: 20px;
+  background: var(--divider);
+  margin: 0 5px;
+  flex: none;
+}
+
+.zoom-label {
+  border: none;
+  background: transparent;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--icon);
+  min-width: 48px;
+  cursor: pointer;
+  height: 34px;
+  border-radius: 8px;
+}
+
+.zoom-label:hover {
+  background: var(--hover-bg);
+  color: var(--icon-hover);
+}
+
+/* Contextual style bar: one row of chips, each opening a popover. */
+
+.style-popup {
+  z-index: 20;
+}
+
+.dd {
+  position: relative;
+}
+
+.popup-btn.chip {
+  width: auto;
+  padding: 0 7px;
+  gap: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.popup-btn.chip.open {
+  background: var(--open-bg);
+  color: var(--icon-hover);
+}
+
+.caret {
+  font-size: 8px;
+  color: var(--caret);
+}
+
+.color-chip-swatch {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  border-radius: 5px;
+  border: 1px solid var(--swatch-border);
+}
+
+.color-chip-swatch.ring {
+  background: transparent;
+  border: 4.5px solid;
+}
+
+.chip-aa {
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.dd-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+}
+
+.dd-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.style-popup.opens-up .dd-menu {
+  top: auto;
+  bottom: calc(100% + 10px);
+}
+
+.dd-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dd-separator {
+  height: 1px;
+  background: var(--divider);
+  margin: 2px 0;
+}
+
+.dd-caption {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--caption);
+  width: 72px;
+  flex: none;
+  user-select: none;
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--swatch-border);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+  flex: none;
+}
+
+.swatch:hover {
+  transform: scale(1.12);
+}
+
+.swatch.active {
+  outline: 2px solid var(--swatch-active-ring);
+  outline-offset: 1.5px;
+}
+
+.num-field {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: 7px;
+  padding: 0 7px 0 3px;
+  height: 28px;
+}
+
+.num-field input {
+  width: 42px;
+  border: none;
+  outline: none;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--field-text);
+  background: transparent;
+}
+
+.num-field span {
+  font-size: 11px;
+  color: var(--caption);
+  user-select: none;
+}
+
+.popup-select {
+  height: 28px;
+  border: 1px solid var(--field-border);
+  border-radius: 7px;
+  background: var(--field-bg);
+  font-size: 12.5px;
+  color: var(--field-text);
+  outline: none;
+  flex: none;
+  padding: 0 4px;
+}
+
+.popup-btn.flip svg {
+  transform: scaleX(-1);
+}
+
+/* Text editing overlay (lives on the canvas; color set inline to match
+   the shape's computed label color). */
+
+.text-editor {
+  position: absolute;
+  z-index: 10;
+  background: transparent;
+  /* Outline instead of border: keeps the box metrics identical to the
+     rendered shape so text doesn't shift while editing. */
+  border: none;
+  outline: 1.5px dashed #6366f1;
+  outline-offset: -1.5px;
+  resize: none;
+  overflow: hidden;
+  font-family: system-ui, sans-serif;
+  line-height: 1.3;
+}
