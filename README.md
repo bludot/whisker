@@ -15,7 +15,7 @@ Boards persist locally in your browser (IndexedDB) automatically.
 ### Connecting to a server
 
 Whisker runs fully local by default. To sync boards through a
-[whisker-server](https://github.com/bludot/whisker-server), configure the
+[whisker-server](https://github.com/ThatCatDev/whisker-server), configure the
 URL at build/start time:
 
 ```sh
@@ -34,7 +34,7 @@ device instead. No `VITE_SERVER_URL` = no login page, local-only.
 brew install node          # or: nvm install --lts
 
 # 2. Clone and run
-git clone git@github.com:bludot/whisker.git
+git clone git@github.com:ThatCatDev/whisker.git
 cd whisker
 npm install
 npm run dev                # http://localhost:5173
