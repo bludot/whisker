@@ -11,12 +11,15 @@ import {
   boundsUnion,
   canHaveText,
   connectorEndpoints,
+  denormalizedPoints,
   hitTest,
   isCenterAnchor,
   MIN_SIZE,
   pointOnShape,
+  STROKE_BREAK,
   type Bounds,
   type ConnectorShape,
+  type DrawShape,
   type Point,
   type Shape,
   type ShapeId,
@@ -46,7 +49,13 @@ type Session =
       startBounds: Bounds
       snapshots: Map<ShapeId, Shape>
     }
-  | { kind: 'draw'; points: number[] }
+  | {
+      kind: 'draw'
+      points: number[]
+      /** Stylus in select mode: a tap (no movement) selects what is under
+       *  the pen instead of leaving an invisible dot. */
+      tapSelects?: boolean
+    }
   | { kind: 'create'; type: 'sticky' | 'rect' | 'ellipse'; startW: Point }
   | { kind: 'pinch'; lastMid: Point; lastDist: number }
   | {
@@ -102,6 +111,27 @@ export class InteractionController {
   private sessionPointerType = ''
   private last: Point = { x: 0, y: 0 }
   private detachFns: (() => void)[] = []
+  /**
+   * Ink-first pipeline: pen-down carries ZERO decisions — a pen or stylus
+   * stroke always lands as ink, unconditionally, in the open buffer shape.
+   * Interpretation (grouping, shape recognition) happens exactly once, on
+   * a single idle timer after the writing burst goes quiet. Nothing that a
+   * palm, a hover, or a stale session does can cost the user a stroke.
+   */
+  private inkBuffer: {
+    /** The live draw shape accumulating this burst's strokes. */
+    id: ShapeId
+    strokes: number
+    /** Raw world points of the only stroke — shape recognition applies to
+     *  lone strokes only; a second stroke means handwriting. */
+    loneStroke: Point[] | null
+    /** Shape bounds as we last wrote them: a mismatch at close means the
+     *  user moved/resized the ink, so it is left exactly as-is. */
+    bounds: Bounds
+    timer: ReturnType<typeof setTimeout> | null
+  } | null = null
+  /** Silence after the last pen-up that ends a writing burst. */
+  private static readonly INK_IDLE_MS = 1200
 
   constructor(host: HTMLElement, renderer: BoardRenderer, editor: Editor) {
     this.host = host
@@ -121,6 +151,24 @@ export class InteractionController {
         target.removeEventListener(type, fn as EventListener),
       )
     }
+    // iOS Safari runs its own gesture recognition on the raw TOUCH stream
+    // even under touch-action: none (a long-standing WebKit quirk): two
+    // quick pencil contacts — crossing a t — read as a double-tap, and
+    // Safari may cancel or swallow the second contact's pointer events.
+    // Claiming stylus touches disables that path entirely. Finger touches
+    // keep their defaults so double-tapping a sticky still edits text.
+    const claimStylusTouch = (e: TouchEvent) => {
+      // While the text editor is open the pencil is writing TEXT (iPadOS
+      // Scribble handwriting); claiming its touches would kill that input.
+      if (this.editor.editingId) return
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        if (e.changedTouches[i].touchType !== 'stylus') return
+      }
+      e.preventDefault()
+    }
+    on(this.host, 'touchstart', claimStylusTouch, { passive: false })
+    on(this.host, 'touchmove', claimStylusTouch, { passive: false })
+    on(this.host, 'touchend', claimStylusTouch, { passive: false })
     on(this.host, 'pointerdown', (e) => this.onPointerDown(e as PointerEvent))
     on(this.host, 'pointermove', (e) => this.onPointerMove(e as PointerEvent))
     on(this.host, 'pointerup', (e) => this.onPointerUp(e as PointerEvent))
@@ -204,6 +252,8 @@ export class InteractionController {
   }
 
   detach(): void {
+    if (this.inkBuffer?.timer) clearTimeout(this.inkBuffer.timer)
+    this.inkBuffer = null
     this.detachFns.forEach((fn) => fn())
     this.detachFns = []
   }
@@ -225,6 +275,20 @@ export class InteractionController {
       if (hitTest(all[i], w, get, tol)) return all[i]
     }
     return null
+  }
+
+  /** On a small selection (e.g. handwriting) the eight handle grab zones
+   *  blanket the ink, which would turn every drag into a resize. Prefer
+   *  moving when the pointer is actually on a selected shape and the
+   *  selection is that small; the handle squares clear of the ink still
+   *  resize. */
+  private moveWinsOverResize(w: Point): boolean {
+    const b = this.renderer.selectionBounds()
+    if (!b) return false
+    const grab = this.renderer.worldPx(8)
+    if (b.width > grab * 6 && b.height > grab * 6) return false
+    const hit = this.topShapeAt(w)
+    return !!hit && this.editor.selection.has(hit.id)
   }
 
   private handleAt(w: Point): HandleId | null {
@@ -250,10 +314,42 @@ export class InteractionController {
   // ---- pointer events ----------------------------------------------------
 
   private onPointerDown(e: PointerEvent): void {
+    // Text input mode: contacts are writing TEXT, not ink. The textarea is a
+    // child of the host, so its events bubble here — never capture them or
+    // start a session. A contact outside the textarea moves focus off it,
+    // which commits the edit (blur) — closing the editor is all a tap
+    // outside should do; it must not also draw or select.
+    if (this.editor.editingId) return
     const w = this.world(e)
     this.last = { x: e.offsetX, y: e.offsetY }
     this.host.setPointerCapture(e.pointerId)
-    if (e.pointerType === 'pen') this.penSeen = true
+    if (e.pointerType === 'pen') {
+      this.penSeen = true
+      // The pen always wins: a resting palm's pan (or pinch) must not
+      // swallow the stroke that is about to start.
+      if (
+        this.session.kind === 'pinch' ||
+        (this.session.kind !== 'none' && this.sessionPointerType === 'touch')
+      ) {
+        this.cancelSession()
+        this.editor.setSessionActive(false)
+      } else if (
+        this.session.kind === 'draw' &&
+        this.sessionPointerType === 'pen' &&
+        e.pointerId !== this.sessionPointerId
+      ) {
+        // Safari sometimes swallows a pen-up outright when quick double
+        // contacts trip its gesture recognizer. There is only one pen, so
+        // a fresh pen-down proves the old contact ended: commit its ink and
+        // let this stroke start clean — never ignore it (that deadlocks the
+        // controller, eating every stroke that follows).
+        const points = this.session.points
+        this.session = { kind: 'none' }
+        this.renderer.drawPreview = null
+        this.renderer.redrawOverlay()
+        this.finishDraw(points)
+      }
+    }
     if (e.pointerType === 'touch') {
       // Palm rejection: while the pen is mid-gesture, stray touches are
       // ignored completely.
@@ -305,6 +401,8 @@ export class InteractionController {
       }
       this.host.style.cursor = 'grabbing'
       this.editor.setSessionActive(true)
+      // Panning (often just a planted palm) leaves the freehand group open:
+      // time and proximity alone decide whether the next stroke merges.
       return
     }
     if (e.button !== 0) return
@@ -314,6 +412,9 @@ export class InteractionController {
         this.beginSelectSession(w, e.shiftKey, e.pointerType === 'pen')
         break
       case 'pen':
+        // No decisions at pen-down — the stroke lands no matter what. The
+        // idle timer is paused so the buffer can't close mid-stroke.
+        this.pauseInkTimer()
         this.session = { kind: 'draw', points: [w.x, w.y] }
         break
       case 'connector': {
@@ -373,7 +474,28 @@ export class InteractionController {
     return null
   }
 
+  /** True when a stylus pen-down should manipulate the CURRENT selection
+   *  (resize handle, connector endpoint, or dragging a selected shape)
+   *  rather than draw. With nothing selected a stylus always draws. */
+  private stylusManipulatesSelection(w: Point): boolean {
+    if (this.editor.selection.size === 0) return false
+    if (this.handleAt(w) && !this.moveWinsOverResize(w)) return true
+    if (this.connectorEndpointAt(w)) return true
+    const hit = this.topShapeAt(w)
+    return !!hit && this.editor.selection.has(hit.id)
+  }
+
   private beginSelectSession(w: Point, shift: boolean, stylus = false): void {
+    // Ink-first stylus rule: unless the pen lands on the current selection
+    // (tap first, then manipulate), it draws — unconditionally. All
+    // interpretation happens at pen-up (tap-select) or on the idle timer,
+    // so no hover handle or hit-test can ever cost the user a stroke.
+    if (stylus && !this.stylusManipulatesSelection(w)) {
+      this.pauseInkTimer()
+      this.session = { kind: 'draw', points: [w.x, w.y], tapSelects: true }
+      return
+    }
+
     // Drag-out arrow handle: start drawing an arrow from this shape
     // without switching tools.
     const arrowStart = this.arrowHandleHit(w)
@@ -403,7 +525,7 @@ export class InteractionController {
     }
 
     const handle = this.handleAt(w)
-    if (handle) {
+    if (handle && !this.moveWinsOverResize(w)) {
       const startBounds = this.renderer.selectionBounds()!
       const snapshots = new Map<ShapeId, Shape>()
       for (const s of this.editor.getSelectedShapes()) {
@@ -450,15 +572,6 @@ export class InteractionController {
         candY,
         othersBounds,
       }
-      return
-    }
-
-    // A stylus on empty canvas draws (with shape recognition) instead of
-    // marquee-selecting — no tool switching needed on a tablet. Shapes,
-    // handles and endpoints above were still manipulated normally.
-    if (stylus) {
-      this.editor.clearSelection()
-      this.session = { kind: 'draw', points: [w.x, w.y] }
       return
     }
 
@@ -663,10 +776,26 @@ export class InteractionController {
         return
       }
       case 'draw': {
-        this.session.points.push(w.x, w.y)
+        // 120 Hz pencil samples arrive coalesced; taking only the frame's
+        // last one visibly flattens fast curves. offsetX is unreliable on
+        // coalesced events, so map from client coordinates.
+        const coalesced = e.getCoalescedEvents?.() ?? []
+        if (coalesced.length > 1) {
+          const rect = this.host.getBoundingClientRect()
+          for (const ev of coalesced) {
+            const p = this.camera.screenToWorld(
+              ev.clientX - rect.left,
+              ev.clientY - rect.top,
+            )
+            this.session.points.push(p.x, p.y)
+          }
+        } else {
+          this.session.points.push(w.x, w.y)
+        }
         this.renderer.drawPreview = {
           points: this.session.points,
           color: this.editor.styleDefaults.strokeColor,
+          width: this.editor.penDefaults.width,
         }
         this.renderer.redrawOverlay()
         return
@@ -723,6 +852,28 @@ export class InteractionController {
 
   private onPointerCancel(e: PointerEvent): void {
     this.activePointers.delete(e.pointerId)
+    // iOS fires pointercancel for palm-rejected touches: a contact that
+    // isn't driving the gesture must not kill a pen stroke mid-word.
+    if (
+      this.session.kind !== 'none' &&
+      this.session.kind !== 'pinch' &&
+      this.sessionPointerId !== null &&
+      e.pointerId !== this.sessionPointerId
+    ) {
+      return
+    }
+    // Ink-first even here: iOS cancels a pen stroke it re-reads as a system
+    // gesture (a quick double contact — crossing a t — looks like a double
+    // tap). The drawn points are real; commit them instead of eating them.
+    if (this.session.kind === 'draw') {
+      const points = this.session.points
+      this.session = { kind: 'none' }
+      this.renderer.drawPreview = null
+      this.renderer.redrawOverlay()
+      this.finishDraw(points)
+      if (this.activePointers.size === 0) this.editor.setSessionActive(false)
+      return
+    }
     this.cancelSession()
     if (this.activePointers.size === 0) this.editor.setSessionActive(false)
   }
@@ -745,6 +896,16 @@ export class InteractionController {
     if (this.session.kind === 'pinch') {
       if (this.activePointers.size < 2) this.session = { kind: 'none' }
       if (this.activePointers.size === 0) this.editor.setSessionActive(false)
+      return
+    }
+    // Only the pointer that started the gesture may end it. A palm lifting
+    // mid-stroke must neither finish the stroke nor turn a stray pan into
+    // a tap-select at the pen's position.
+    if (
+      this.session.kind !== 'none' &&
+      this.sessionPointerId !== null &&
+      e.pointerId !== this.sessionPointerId
+    ) {
       return
     }
 
@@ -795,10 +956,34 @@ export class InteractionController {
         return
       }
       case 'draw': {
+        // The pen-up position is ink too. A fast flick (crossing a t) can
+        // finish before Safari delivers a single pointermove; without this
+        // point the stroke would be an empty tap and vanish. A true tap
+        // gets a hair of length so the round line cap renders it as a dot
+        // (dotting an i) instead of a degenerate, invisible path.
+        const n = session.points.length
+        if (w.x === session.points[n - 2] && w.y === session.points[n - 1]) {
+          session.points.push(w.x + this.renderer.worldPx(0.6), w.y)
+        } else {
+          session.points.push(w.x, w.y)
+        }
         // Clear the preview BEFORE creating the shape: if creation ever
         // throws, ghost ink must not linger on the overlay.
         this.renderer.drawPreview = null
         this.renderer.redrawOverlay()
+        // A stylus tap (no real movement) is selection intent: it ends the
+        // writing burst and selects whatever is under the pen — that is how
+        // stylus users grab things for moving, styling, or deleting.
+        if (session.tapSelects) {
+          const b = pointsBounds(session.points)
+          if (Math.max(b.width, b.height) <= this.renderer.worldPx(5)) {
+            this.closeInkBuffer()
+            const hit = this.topShapeAt(w)
+            if (hit) this.editor.select([hit.id])
+            else this.editor.clearSelection()
+            return
+          }
+        }
         this.finishDraw(session.points)
         return
       }
@@ -837,52 +1022,154 @@ export class InteractionController {
   private finishDraw(points: number[]): void {
     if (points.length < 4) {
       this.renderer.redrawOverlay()
+      // Pen-down paused the idle countdown; an aborted stroke must not
+      // leave the burst open forever.
+      this.restartInkTimer()
       return
     }
 
-    if (this.editor.recognizeShapes) {
-      const world: Point[] = []
-      for (let i = 0; i < points.length; i += 2) {
-        world.push({ x: points[i], y: points[i + 1] })
-      }
-      const recognized = recognizeStroke(world, this.renderer.worldPx(1))
-      if (recognized) {
-        this.materializeStroke(recognized)
+    // A burst is open: every stroke folds in, no questions asked. Distance
+    // doesn't matter — the idle timer alone decides when the burst ends.
+    if (this.inkBuffer) {
+      const shape = this.editor.store.get(this.inkBuffer.id)
+      if (shape?.type === 'draw') {
+        this.inkBuffer.bounds = this.appendStroke(shape, points)
+        this.inkBuffer.strokes++
+        this.inkBuffer.loneStroke = null
+        this.restartInkTimer()
         return
       }
+      this.inkBuffer = null // the buffer shape was deleted/undone
     }
-    let x0 = Infinity
-    let y0 = Infinity
-    let x1 = -Infinity
-    let y1 = -Infinity
+
+    // No open burst. A stroke that STARTS on existing unselected ink rejoins
+    // that item (crossing a t long after writing it); this hit-test runs at
+    // pen-UP, so it can never cost a stroke.
+    const start = { x: points[0], y: points[1] }
+    const target = this.topShapeAt(start)
+    if (
+      target?.type === 'draw' &&
+      !this.editor.selection.has(target.id)
+    ) {
+      const bounds = this.appendStroke(target, points)
+      this.inkBuffer = {
+        id: target.id,
+        strokes: 2, // at least — enough to disqualify recognition
+        loneStroke: null,
+        bounds,
+        timer: null,
+      }
+      this.restartInkTimer()
+      return
+    }
+
+    // Fresh burst: the stroke is its own (visible) shape immediately; the
+    // idle timer will decide later whether it was really a rect/line/circle.
+    const id = this.addDrawShape(points)
+    const loneStroke: Point[] = []
     for (let i = 0; i < points.length; i += 2) {
-      x0 = Math.min(x0, points[i])
-      x1 = Math.max(x1, points[i])
-      y0 = Math.min(y0, points[i + 1])
-      y1 = Math.max(y1, points[i + 1])
+      loneStroke.push({ x: points[i], y: points[i + 1] })
     }
-    const width = Math.max(1, x1 - x0)
-    const height = Math.max(1, y1 - y0)
-    const normalized: number[] = []
-    for (let i = 0; i < points.length; i += 2) {
-      normalized.push((points[i] - x0) / width, (points[i + 1] - y0) / height)
+    this.inkBuffer = {
+      id,
+      strokes: 1,
+      loneStroke,
+      bounds: pointsBounds(points),
+      timer: null,
     }
+    this.restartInkTimer()
+  }
+
+  /** Stop the idle countdown while a pen stroke is in flight — the burst
+   *  must never be processed out from under a moving pen. */
+  private pauseInkTimer(): void {
+    if (this.inkBuffer?.timer) {
+      clearTimeout(this.inkBuffer.timer)
+      this.inkBuffer.timer = null
+    }
+  }
+
+  private restartInkTimer(): void {
+    if (!this.inkBuffer) return
+    this.pauseInkTimer()
+    this.inkBuffer.timer = setTimeout(
+      () => this.closeInkBuffer(),
+      InteractionController.INK_IDLE_MS,
+    )
+  }
+
+  /** End the writing burst and interpret it — the single place any
+   *  processing of drawn ink happens. Grouping already happened (the burst
+   *  IS one shape); what remains is shape recognition for a lone stroke. */
+  private closeInkBuffer(): void {
+    const buf = this.inkBuffer
+    if (!buf) return
+    if (buf.timer) clearTimeout(buf.timer)
+    this.inkBuffer = null
+
+    // Only a lone stroke can be a shape; several strokes are handwriting.
+    if (!buf.loneStroke || !this.editor.recognizeShapes) return
+    const shape = this.editor.store.get(buf.id)
+    if (!shape || this.editor.sessionActive || this.editor.selection.has(buf.id)) {
+      return
+    }
+    // Moved or resized since drawn: the user claimed the ink — keep it.
+    if (
+      shape.x !== buf.bounds.x ||
+      shape.y !== buf.bounds.y ||
+      shape.width !== buf.bounds.width ||
+      shape.height !== buf.bounds.height
+    ) {
+      return
+    }
+    // Ink near other ink is handwriting context, not a diagram element: an
+    // "l", a dash or an underline beside text must never become an arrow.
+    const gap = Math.max(buf.bounds.width, buf.bounds.height, this.renderer.worldPx(20))
+    const zone: Bounds = {
+      x: buf.bounds.x - gap,
+      y: buf.bounds.y - gap,
+      width: buf.bounds.width + gap * 2,
+      height: buf.bounds.height + gap * 2,
+    }
+    for (const other of this.editor.store.getAll()) {
+      if (other.id === buf.id || other.type !== 'draw') continue
+      if (boundsIntersect(zone, other)) return
+    }
+    const rec = recognizeStroke(buf.loneStroke, this.renderer.worldPx(1))
+    if (!rec) return
+    // Remove the ink BEFORE materializing: a recognized line hit-tests its
+    // endpoints for shapes to connect, and must not find its own ink there.
+    this.editor.store.removeMany([buf.id])
+    this.materializeStroke(rec)
+  }
+
+  /** Create a freehand shape from one world-space stroke; returns its id. */
+  private addDrawShape(world: number[]): ShapeId {
+    const id = newShapeId()
     this.editor.store.add({
-      id: newShapeId(),
+      id,
       type: 'draw',
-      x: x0,
-      y: y0,
-      width,
-      height,
+      ...normalizeStroke(world),
       z: this.editor.store.topZ() + 1,
       fillColor: this.editor.styleDefaults.strokeColor,
       fillOpacity: 0,
       strokeColor: this.editor.styleDefaults.strokeColor,
       strokeOpacity: this.editor.styleDefaults.strokeOpacity,
-      strokeWidth: 4,
-      points: normalized,
+      strokeWidth: this.editor.penDefaults.width,
+      dash: this.editor.penDefaults.dash,
     })
-    // Pen stays active so several strokes can be drawn in a row.
+    return id
+  }
+
+  /** Fold another stroke into an existing freehand shape, separated by a
+   *  pen-lift marker, and renormalize to the grown bounds (returned). */
+  private appendStroke(shape: DrawShape, world: number[]): Bounds {
+    const combined = denormalizedPoints(shape)
+    combined.push(STROKE_BREAK, STROKE_BREAK)
+    for (let i = 0; i < world.length; i++) combined.push(world[i])
+    const packed = normalizeStroke(combined)
+    this.editor.store.update(shape.id, packed)
+    return { x: packed.x, y: packed.y, width: packed.width, height: packed.height }
   }
 
   /** Replace a recognized pen stroke with the real shape it resembles.
@@ -945,7 +1232,8 @@ export class InteractionController {
         ...this.editor.textDefaults,
       } as Shape)
     }
-    this.editor.select([id])
+    // No auto-select: conversion happens on a timer now, and yanking the
+    // selection (plus its style popup) mid-writing reads as flicker.
   }
 
   private finishConnect(
@@ -1017,6 +1305,9 @@ export class InteractionController {
   }
 
   private onDoubleClick(e: MouseEvent): void {
+    // Two quick pen contacts while writing (crossing a t over a shape)
+    // synthesize a dblclick; mid-burst that is ink, never "edit text".
+    if (this.inkBuffer) return
     if (this.editor.tool !== 'select') return
     const hit = this.topShapeAt(this.world(e))
     if (hit && canHaveText(hit)) {
@@ -1198,10 +1489,54 @@ export class InteractionController {
   }
 }
 
-/** Deep-copy a shape (structuredClone needs Safari 15.4+; shapes are
- *  plain JSON data, so this is equivalent). */
-function cloneShape(s: Shape): Shape {
-  return JSON.parse(JSON.stringify(s)) as Shape
+/** Axis-aligned bounds of a flat [x,y,...] world stroke, skipping the NaN
+ *  pairs that mark pen-lifts between sub-strokes. Width/height floor at 1 so
+ *  normalization never divides by zero. */
+export function pointsBounds(pts: number[]): Bounds {
+  let x0 = Infinity
+  let y0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  for (let i = 0; i < pts.length; i += 2) {
+    if (Number.isNaN(pts[i])) continue
+    x0 = Math.min(x0, pts[i])
+    x1 = Math.max(x1, pts[i])
+    y0 = Math.min(y0, pts[i + 1])
+    y1 = Math.max(y1, pts[i + 1])
+  }
+  return { x: x0, y: y0, width: Math.max(1, x1 - x0), height: Math.max(1, y1 - y0) }
+}
+
+/** Pack a world-space stroke (possibly multi-part, with STROKE_BREAK markers)
+ *  into a DrawShape's bounds plus 0..1 normalized points. */
+export function normalizeStroke(
+  world: number[],
+): Pick<DrawShape, 'x' | 'y' | 'width' | 'height' | 'points'> {
+  const b = pointsBounds(world)
+  const points: number[] = []
+  for (let i = 0; i < world.length; i += 2) {
+    if (Number.isNaN(world[i])) {
+      points.push(STROKE_BREAK, STROKE_BREAK)
+      continue
+    }
+    points.push((world[i] - b.x) / b.width, (world[i + 1] - b.y) / b.height)
+  }
+  return { x: b.x, y: b.y, width: b.width, height: b.height, points }
+}
+
+const NAN_TOKEN = ' NaN'
+
+/** Deep-copy a shape. Prefers structuredClone (Safari 15.4+); the JSON
+ *  fallback for older iPads must round-trip the NaN pen-lift markers in
+ *  freehand points, which plain JSON would flatten to null. */
+export function cloneShape(s: Shape): Shape {
+  if (typeof structuredClone === 'function') return structuredClone(s)
+  return JSON.parse(
+    JSON.stringify(s, (_k, v) =>
+      typeof v === 'number' && Number.isNaN(v) ? NAN_TOKEN : v,
+    ),
+    (_k, v) => (v === NAN_TOKEN ? NaN : v),
+  ) as Shape
 }
 
 function boundsFromPoints(a: Point, b: Point): Bounds {

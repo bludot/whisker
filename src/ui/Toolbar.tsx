@@ -9,8 +9,14 @@ import {
   themedColor,
   type ThemePreference,
 } from './theme'
-import { PALETTE, type Tool } from '../scene/types'
+import { PALETTE, type LineDash, type Tool } from '../scene/types'
 import type { Editor } from '../editor/Editor'
+
+const DASH_OPTIONS: { value: LineDash; icon: IconName; label: string }[] = [
+  { value: 'solid', icon: 'lineSolid', label: 'Solid' },
+  { value: 'dashed', icon: 'lineDashed', label: 'Dashed' },
+  { value: 'dotted', icon: 'lineDotted', label: 'Dotted' },
+]
 
 const THEME_OPTIONS: { value: ThemePreference; icon: IconName; label: string }[] = [
   { value: 'light', icon: 'sun', label: 'Light' },
@@ -28,7 +34,13 @@ const TOOLS: { id: Tool; label: string; icon: IconName }[] = [
   { id: 'connector', label: 'Arrow: drag between shapes — C', icon: 'connector' },
 ]
 
-export function Toolbar({ editor }: { editor: Editor }) {
+export function Toolbar({
+  editor,
+  onHome,
+}: {
+  editor: Editor
+  onHome?: () => void
+}) {
   const [, force] = useReducer((c: number) => c + 1, 0)
   useEffect(() => editor.subscribe(force), [editor])
   useEffect(() => subscribeTheme(force), [])
@@ -38,9 +50,13 @@ export function Toolbar({ editor }: { editor: Editor }) {
 
   return (
     <div className="toolbar">
-      <span className="toolbar-logo" title="Whisker">
+      <button
+        className="toolbar-logo"
+        title="All boards"
+        onClick={() => onHome?.()}
+      >
         🐈
-      </span>
+      </button>
       {TOOLS.map((t) => (
         <button
           key={t.id}
@@ -113,6 +129,33 @@ export function Toolbar({ editor }: { editor: Editor }) {
         </div>
         <div className="dd-separator" />
         <div className="dd-row">
+          <span className="dd-caption">Pen</span>
+          <NumberField
+            value={editor.penDefaults.width}
+            min={1}
+            max={24}
+            step={1}
+            suffix="px"
+            title="Pen stroke width"
+            onChange={(v) => editor.setPenDefaults({ width: v })}
+          />
+          {DASH_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              className={
+                editor.penDefaults.dash === o.value
+                  ? 'popup-btn active'
+                  : 'popup-btn'
+              }
+              title={`${o.label} pen stroke`}
+              onClick={() => editor.setPenDefaults({ dash: o.value })}
+            >
+              <Icon name={o.icon} />
+            </button>
+          ))}
+        </div>
+        <div className="dd-separator" />
+        <div className="dd-row">
           <span className="dd-caption">Fill</span>
           {PALETTE.map((color) => (
             <button
@@ -177,6 +220,23 @@ export function Toolbar({ editor }: { editor: Editor }) {
             title="Default border width for new shapes"
             onChange={(v) => editor.setStyleDefaults({ strokeWidth: v })}
           />
+        </div>
+        <div className="dd-row">
+          <span className="dd-caption">Style</span>
+          {DASH_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              className={
+                (editor.styleDefaults.dash ?? 'solid') === o.value
+                  ? 'popup-btn active'
+                  : 'popup-btn'
+              }
+              title={`${o.label} border for new shapes`}
+              onClick={() => editor.setStyleDefaults({ dash: o.value })}
+            >
+              <Icon name={o.icon} />
+            </button>
+          ))}
         </div>
       </Dropdown>
     </div>

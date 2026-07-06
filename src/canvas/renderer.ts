@@ -18,6 +18,7 @@ import {
   type Bounds,
   type ConnectorShape,
   type EllipseShape,
+  type LineDash,
   type Point,
   type RectShape,
   type Shape,
@@ -44,7 +45,7 @@ export class BoardRenderer {
   private overlay = new Graphics()
 
   marquee: Bounds | null = null
-  drawPreview: { points: number[]; color: number } | null = null
+  drawPreview: { points: number[]; color: number; width: number } | null = null
   connectPreview: { a: Point; b: Point } | null = null
   snapGuides: { v: number[]; h: number[] } | null = null
   /** Equal-spacing indicators shown while a drag snaps to distribution. */
@@ -141,6 +142,32 @@ export class BoardRenderer {
     const PAD = 80
     this.camera.zoom = Math.min(
       Camera.MAX_ZOOM,
+      Math.max(
+        Camera.MIN_ZOOM,
+        Math.min(
+          width / (bounds.width + PAD * 2),
+          height / (bounds.height + PAD * 2),
+        ),
+      ),
+    )
+    this.camera.x = bounds.x + bounds.width / 2 - width / 2 / this.camera.zoom
+    this.camera.y = bounds.y + bounds.height / 2 - height / 2 / this.camera.zoom
+    this.applyCamera()
+  }
+
+  /** Entry view when opening a board: center the content, zooming OUT to
+   *  fit if it overflows the screen but never zooming IN past 100% (a lone
+   *  sticky should not fill the viewport). Empty boards keep the default
+   *  origin view. */
+  centerContent(): void {
+    const get: ShapeResolver = (id) => this.editor.store.get(id)
+    const all = this.editor.store.getAll()
+    const bounds = boundsUnion(all.map((s) => boundsOf(s, get)))
+    if (!bounds) return
+    const { width, height } = this.app.screen
+    const PAD = 80
+    this.camera.zoom = Math.min(
+      1,
       Math.max(
         Camera.MIN_ZOOM,
         Math.min(
@@ -278,7 +305,7 @@ export class BoardRenderer {
       for (let i = 2; i < pts.length; i += 2) o.lineTo(pts[i], pts[i + 1])
       o.stroke({
         color: themedColor(this.drawPreview.color),
-        width: 4,
+        width: this.drawPreview.width,
         cap: 'round',
         join: 'round',
       })
@@ -471,12 +498,18 @@ function buildShape(
     width: shape.strokeWidth,
   }
 
+  const dash = shape.dash ?? 'solid'
+
   switch (shape.type) {
     case 'sticky':
     case 'rect': {
       g.rect(0, 0, shape.width, shape.height).fill(fill)
       if (stroke.width > 0) {
-        g.rect(0, 0, shape.width, shape.height).stroke(stroke)
+        if (dash === 'solid') {
+          g.rect(0, 0, shape.width, shape.height).stroke(stroke)
+        } else {
+          strokeSubpaths(g, [rectOutline(shape.width, shape.height)], stroke, dash)
+        }
       }
       addLabel(shape)
       break
@@ -484,19 +517,42 @@ function buildShape(
     case 'ellipse': {
       g.ellipse(shape.width / 2, shape.height / 2, shape.width / 2, shape.height / 2)
         .fill(fill)
-        .stroke(stroke)
+      if (stroke.width > 0) {
+        if (dash === 'solid') {
+          g.ellipse(
+            shape.width / 2,
+            shape.height / 2,
+            shape.width / 2,
+            shape.height / 2,
+          ).stroke(stroke)
+        } else {
+          strokeSubpaths(
+            g,
+            [ellipseOutline(shape.width, shape.height)],
+            stroke,
+            dash,
+          )
+        }
+      }
       addLabel(shape)
       break
     }
     case 'draw': {
       const pts = denormalizedPoints(shape)
-      if (pts.length >= 4) {
-        g.moveTo(pts[0] - shape.x, pts[1] - shape.y)
-        for (let i = 2; i < pts.length; i += 2) {
-          g.lineTo(pts[i] - shape.x, pts[i + 1] - shape.y)
+      // One shape can carry several strokes: a NaN pair marks a pen-lift, so
+      // the next point starts a new sub-path instead of connecting across it.
+      const subs: Point[][] = []
+      let current: Point[] = []
+      for (let i = 0; i + 1 < pts.length; i += 2) {
+        if (Number.isNaN(pts[i])) {
+          if (current.length) subs.push(current)
+          current = []
+          continue
         }
-        g.stroke({ ...stroke, cap: 'round', join: 'round' })
+        current.push({ x: pts[i] - shape.x, y: pts[i + 1] - shape.y })
       }
+      if (current.length) subs.push(current)
+      strokeSubpaths(g, subs, stroke, dash)
       break
     }
     case 'connector': {
@@ -528,13 +584,80 @@ function buildShape(
       }
       if (stroke.width > 0) {
         const border = new Graphics()
-        border.rect(0, 0, shape.width, shape.height).stroke(stroke)
+        if (dash === 'solid') {
+          border.rect(0, 0, shape.width, shape.height).stroke(stroke)
+        } else {
+          strokeSubpaths(
+            border,
+            [rectOutline(shape.width, shape.height)],
+            stroke,
+            dash,
+          )
+        }
         node.addChild(border)
       }
       break
     }
   }
   return node
+}
+
+/** Stroke polylines in the given line style. Solid strokes pass through
+ *  untouched; dashed/dotted reuse the connector dash machinery, so pen
+ *  strokes and shape borders share one look. */
+function strokeSubpaths(
+  g: Graphics,
+  subs: Point[][],
+  stroke: { color: number; alpha: number; width: number },
+  dash: LineDash,
+): void {
+  const width = Math.max(1, stroke.width)
+  if (dash === 'dotted') {
+    const r = Math.max(1.5, width * 0.75)
+    for (const sub of subs) {
+      for (const p of sampleAlong(sub, Math.max(8, width * 3.5))) {
+        g.circle(p.x, p.y, r)
+      }
+    }
+    g.fill({ color: stroke.color, alpha: stroke.alpha })
+    return
+  }
+  const drawn =
+    dash === 'dashed'
+      ? subs.flatMap((sub) =>
+          dashedSubpaths(sub, Math.max(9, width * 3), Math.max(6, width * 2)),
+        )
+      : subs
+  for (const sub of drawn) {
+    if (sub.length < 2) continue
+    g.moveTo(sub[0].x, sub[0].y)
+    for (let i = 1; i < sub.length; i++) g.lineTo(sub[i].x, sub[i].y)
+  }
+  g.stroke({ ...stroke, width: stroke.width || 1, cap: 'round', join: 'round' })
+}
+
+/** Closed rectangle outline as a polyline (for dashed/dotted borders). */
+function rectOutline(w: number, h: number): Point[] {
+  return [
+    { x: 0, y: 0 },
+    { x: w, y: 0 },
+    { x: w, y: h },
+    { x: 0, y: h },
+    { x: 0, y: 0 },
+  ]
+}
+
+/** Closed ellipse outline sampled as a polyline (for dashed/dotted borders). */
+function ellipseOutline(w: number, h: number): Point[] {
+  const cx = w / 2
+  const cy = h / 2
+  const steps = 64
+  const out: Point[] = []
+  for (let i = 0; i <= steps; i++) {
+    const t = (i / steps) * Math.PI * 2
+    out.push({ x: cx + cx * Math.cos(t), y: cy + cy * Math.sin(t) })
+  }
+  return out
 }
 
 /** Split a polyline into drawn sub-paths following a dash pattern. */

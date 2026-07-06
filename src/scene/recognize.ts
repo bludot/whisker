@@ -54,15 +54,18 @@ export function recognizeStroke(raw: Point[], px: number): RecognizedStroke {
   }
   const bounds: Bounds = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
   const diag = Math.hypot(bounds.width, bounds.height)
-  if (diag < px * 24) return null // too tiny to mean anything
+  // Letter-sized marks are handwriting, never shapes: an "o" or the bar of
+  // a "t" must stay ink. Deliberate diagram shapes are drawn much larger.
+  if (diag < px * 40) return null
 
   const first = raw[0]
   const last = raw[raw.length - 1]
   const chord = Math.hypot(last.x - first.x, last.y - first.y)
   const pts = resample(raw, 64)
 
-  // Straight line: every point close to the first→last segment.
-  if (chord > px * 30) {
+  // Straight line: every point close to the first→last segment. The high
+  // size bar keeps tall letters (l, t, k strokes) out — handwriting again.
+  if (chord > px * 72) {
     let maxDev = 0
     for (const p of pts) {
       maxDev = Math.max(maxDev, distToSegment(p, first, last))

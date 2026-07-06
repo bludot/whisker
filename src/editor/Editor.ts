@@ -6,12 +6,18 @@ import {
   canHaveText,
   isResizable,
   type ConnectorStyleProps,
+  type LineDash,
   type Shape,
   type ShapeId,
   type StyleProps,
   type TextStyleProps,
   type Tool,
 } from '../scene/types'
+
+export interface PenDefaults {
+  width: number
+  dash: LineDash
+}
 
 export type AlignKind = 'left' | 'centerH' | 'right' | 'top' | 'middle' | 'bottom'
 
@@ -35,6 +41,7 @@ export class Editor {
     strokeColor: 0xfbbf24,
     strokeOpacity: 1,
     strokeWidth: 2,
+    dash: 'solid',
   }
   /** Text style for newly created shapes; follows the last text edit so
    *  consecutive shapes come out formatted consistently. */
@@ -44,6 +51,8 @@ export class Editor {
     textAlign: 'center',
     textVAlign: 'middle',
   }
+  /** Stroke width and line style for the pen tool; persisted. */
+  penDefaults: PenDefaults = { width: 4, dash: 'solid' }
   /** Convert rough pen strokes into real shapes (rect/ellipse/line). */
   recognizeShapes = localStorage.getItem('whisker-recognize') !== 'off'
   /** Once a stylus is in use, bare fingers pan (tap still selects). */
@@ -64,6 +73,8 @@ export class Editor {
       if (saved) this.styleDefaults = { ...this.styleDefaults, ...JSON.parse(saved) }
       const savedText = localStorage.getItem('whisker-text-defaults')
       if (savedText) this.textDefaults = { ...this.textDefaults, ...JSON.parse(savedText) }
+      const savedPen = localStorage.getItem('whisker-pen-defaults')
+      if (savedPen) this.penDefaults = { ...this.penDefaults, ...JSON.parse(savedPen) }
     } catch {
       // Corrupt persisted defaults: fall back to the built-ins.
     }
@@ -86,6 +97,15 @@ export class Editor {
     localStorage.setItem(
       'whisker-style-defaults',
       JSON.stringify(this.styleDefaults),
+    )
+    this.notify()
+  }
+
+  setPenDefaults(patch: Partial<PenDefaults>): void {
+    this.penDefaults = { ...this.penDefaults, ...patch }
+    localStorage.setItem(
+      'whisker-pen-defaults',
+      JSON.stringify(this.penDefaults),
     )
     this.notify()
   }

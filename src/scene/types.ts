@@ -35,6 +35,8 @@ export interface StyleProps {
   strokeColor: number
   strokeOpacity: number
   strokeWidth: number
+  /** Border/stroke line style; absent means solid (pre-existing shapes). */
+  dash?: LineDash
 }
 
 interface ShapeBase extends StyleProps {
@@ -72,8 +74,15 @@ export interface EllipseShape extends ShapeBase, Partial<TextStyleProps> {
   text: string
 }
 
+/** Pen-lift marker between two strokes packed into one DrawShape: rendering
+ *  and hit-testing start a fresh sub-path here instead of connecting across
+ *  the gap, so handwriting drawn in one burst stays a single item. Stored as
+ *  a NaN x,y pair (NaN survives bounds normalization untouched). */
+export const STROKE_BREAK = NaN
+
 /** Freehand stroke. `points` are x,y pairs normalized to the shape bounds
- *  (0..1), so resizing the bounds resizes the stroke for free. */
+ *  (0..1), so resizing the bounds resizes the stroke for free. A single shape
+ *  may hold several strokes separated by {@link STROKE_BREAK} markers. */
 export interface DrawShape extends ShapeBase {
   type: 'draw'
   points: number[]
@@ -361,6 +370,9 @@ export function hitTest(
       const pts = denormalizedPoints(shape)
       const hit = (shape.strokeWidth ?? 4) / 2 + tolerance
       for (let i = 0; i + 3 < pts.length; i += 2) {
+        // Skip the gap across a pen-lift: the two strokes it joins never
+        // touched, so there is nothing to hit between them.
+        if (Number.isNaN(pts[i]) || Number.isNaN(pts[i + 2])) continue
         const a = { x: pts[i], y: pts[i + 1] }
         const b = { x: pts[i + 2], y: pts[i + 3] }
         if (distToSegment(p, a, b) <= hit) return true

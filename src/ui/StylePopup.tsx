@@ -116,8 +116,8 @@ export function StylePopup({
   const distributable = shapes.filter(isResizable).length >= 3
 
   const chipCount =
-    2 + (textRef ? 2 : 0) + (connectorRef ? 1 : 0) + (alignable ? 1 : 0)
-  const width = 24 + chipCount * 48
+    3 + (textRef ? 2 : 0) + (connectorRef ? 1 : 0) + (alignable ? 1 : 0)
+  const width = 24 + chipCount * 48 + 12
   const height = ROW_HEIGHT
 
   const topLeft = renderer.camera.worldToScreen(bounds.x, bounds.y)
@@ -229,6 +229,12 @@ export function StylePopup({
             title="Border width"
             onChange={(v) => editor.applyStyle({ strokeWidth: v })}
           />
+        </div>
+        <div className="dd-row">
+          <span className="dd-caption">Style</span>
+          {buttonGroup(DASHES, ref.dash ?? 'solid', (v) =>
+            editor.applyStyle({ dash: v }),
+          )}
         </div>
       </Dropdown>
       {textRef && (
@@ -352,6 +358,14 @@ export function StylePopup({
           </div>
         </Dropdown>
       )}
+      <span className="divider" />
+      <button
+        className="popup-btn danger"
+        title="Delete — Del"
+        onClick={() => editor.deleteSelection()}
+      >
+        <Icon name="trash" />
+      </button>
     </div>
   )
 }
