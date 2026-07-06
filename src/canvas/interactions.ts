@@ -480,6 +480,31 @@ export class InteractionController {
     return this.renderer.worldPx(12)
   }
 
+  /** Attachment target for a connector endpoint: the shape under `p`, or
+   *  the nearest node shape within `radius` of it. Hand-drawn and dragged
+   *  arrow ends rarely land exactly inside their target — stopping just
+   *  short of a box must still snap to it. Loose ink is only a target
+   *  when hit directly. */
+  private connectTargetNear(p: Point, radius: number): Shape | null {
+    const direct = this.topShapeAt(p, true)
+    if (direct) return direct
+    const get = (id: ShapeId) => this.editor.store.get(id)
+    let best: Shape | null = null
+    let bestD = radius
+    for (const s of this.editor.store.getAll()) {
+      if (s.type === 'connector' || s.type === 'draw') continue
+      const b = boundsOf(s, get)
+      const dx = Math.max(b.x - p.x, 0, p.x - (b.x + b.width))
+      const dy = Math.max(b.y - p.y, 0, p.y - (b.y + b.height))
+      const d = Math.hypot(dx, dy)
+      if (d < bestD) {
+        bestD = d
+        best = s
+      }
+    }
+    return best
+  }
+
   private arrowHandleHit(w: Point): { shapeId: ShapeId; anchor: Point } | null {
     if (!this.arrowShapeId) return null
     const shape = this.editor.store.get(this.arrowShapeId)
@@ -831,7 +856,7 @@ export class InteractionController {
       case 'connect': {
         const get = (id: ShapeId) => this.editor.store.get(id)
         const session = this.session
-        const hover = this.topShapeAt(w, true)
+        const hover = this.connectTargetNear(w, this.renderer.worldPx(28))
         const hoverValid =
           hover && (session.reattach !== null || hover.id !== session.startId)
 
@@ -1197,8 +1222,10 @@ export class InteractionController {
     const sd = this.editor.styleDefaults
     const id = newShapeId()
     if (rec.kind === 'line') {
-      const startShape = this.topShapeAt(rec.a, true)
-      let endShape = this.topShapeAt(rec.b, true)
+      // Generous radius: hand-drawn arrows stop well short of their target.
+      const reach = this.renderer.worldPx(40)
+      const startShape = this.connectTargetNear(rec.a, reach)
+      let endShape = this.connectTargetNear(rec.b, reach)
       if (endShape && startShape && endShape.id === startShape.id) endShape = null
       // Sketched strokes are imprecise: pin only when the stroke ended on
       // a magnetic anchor spot, otherwise float so the arrow routes
@@ -1264,7 +1291,7 @@ export class InteractionController {
     },
     w: Point,
   ): void {
-    const target = this.topShapeAt(w, true)
+    const target = this.connectTargetNear(w, this.renderer.worldPx(28))
     const endAnchor = target ? anchorAt(target, w, this.anchorTol()).anchor : null
 
     if (session.reattach) {
