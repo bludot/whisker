@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/bludot/whisker/compare/v1.0.1...v1.0.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* snap connector endpoints to nearby shapes, not only shapes under them ([17e81ea](https://github.com/bludot/whisker/commit/17e81ea8da440fa862a6d615fc6cd53adcacb2db))
+
 ## [1.0.1](https://github.com/bludot/whisker/compare/v1.0.0...v1.0.1) (2026-07-06)
 
 
