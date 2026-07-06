@@ -162,13 +162,15 @@ export class InteractionController {
       // Scribble handwriting); claiming its touches would kill that input.
       if (this.editor.editingId) return
       for (let i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].touchType !== 'stylus') return
+        // touchType is WebKit-only; not in TS's lib.dom Touch type.
+        const touch = e.changedTouches[i] as Touch & { touchType?: string }
+        if (touch.touchType !== 'stylus') return
       }
       e.preventDefault()
     }
-    on(this.host, 'touchstart', claimStylusTouch, { passive: false })
-    on(this.host, 'touchmove', claimStylusTouch, { passive: false })
-    on(this.host, 'touchend', claimStylusTouch, { passive: false })
+    on(this.host, 'touchstart', (e) => claimStylusTouch(e as TouchEvent), { passive: false })
+    on(this.host, 'touchmove', (e) => claimStylusTouch(e as TouchEvent), { passive: false })
+    on(this.host, 'touchend', (e) => claimStylusTouch(e as TouchEvent), { passive: false })
     on(this.host, 'pointerdown', (e) => this.onPointerDown(e as PointerEvent))
     on(this.host, 'pointermove', (e) => this.onPointerMove(e as PointerEvent))
     on(this.host, 'pointerup', (e) => this.onPointerUp(e as PointerEvent))
