@@ -856,7 +856,7 @@ export class InteractionController {
       case 'connect': {
         const get = (id: ShapeId) => this.editor.store.get(id)
         const session = this.session
-        const hover = this.connectTargetNear(w, this.renderer.worldPx(28))
+        const hover = this.connectTargetNear(w, this.renderer.worldPx(56))
         const hoverValid =
           hover && (session.reattach !== null || hover.id !== session.startId)
 
@@ -1291,7 +1291,7 @@ export class InteractionController {
     },
     w: Point,
   ): void {
-    const target = this.connectTargetNear(w, this.renderer.worldPx(28))
+    const target = this.connectTargetNear(w, this.renderer.worldPx(56))
     const endAnchor = target ? anchorAt(target, w, this.anchorTol()).anchor : null
 
     if (session.reattach) {
@@ -1448,9 +1448,9 @@ export class InteractionController {
   }
 
   private updateHoverAnchorDots(w: Point): void {
-    // Preview the anchor spots while the arrow tool hovers a shape.
+    // Preview the anchor spots while the arrow tool approaches a shape.
     if (this.editor.tool === 'connector') {
-      const hover = this.topShapeAt(w, true)
+      const hover = this.connectTargetNear(w, this.renderer.worldPx(56))
       const next = hover
         ? {
             candidates: ANCHOR_POSITIONS.map((p) => pointOnShape(hover, p)),
