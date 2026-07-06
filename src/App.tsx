@@ -13,6 +13,7 @@ import {
   backendReady,
   backendSession,
   backendUrl,
+  guestModeActive,
   subscribeBackend,
   syncEndpoint,
 } from './collab/backend'
@@ -74,8 +75,8 @@ function Board({ boardId, onHome }: { boardId: string; onHome: () => void }) {
   // keep `token` current.
   const [, forceBackend] = useReducer((c: number) => c + 1, 0)
   useEffect(() => subscribeBackend(forceBackend), [])
-  const endpoint = syncEndpoint()
-  const token = backendSession()?.access_token
+  const endpoint = guestModeActive() ? null : syncEndpoint()
+  const token = guestModeActive() ? undefined : backendSession()?.access_token
   useEffect(() => {
     const sync =
       endpoint && token
@@ -98,7 +99,7 @@ function Board({ boardId, onHome }: { boardId: string; onHome: () => void }) {
   return (
     <div className="app">
       <CanvasHost editor={editor} onRenderer={setRenderer} />
-      <Toolbar editor={editor} onHome={onHome} />
+      <Toolbar editor={editor} renderer={renderer} onHome={onHome} />
       {renderer && <StylePopup editor={editor} renderer={renderer} />}
       {renderer && <ZoomControls renderer={renderer} />}
       {import.meta.env.DEV && (
@@ -118,12 +119,17 @@ export default function App() {
 
   const configured = backendUrl() !== null
   if (configured && !backendReady()) return null // restoring saved session
-  if (configured && !backendSession()) return <LoginScreen />
+  // With a server configured, the login page is the default view; guests
+  // opt out explicitly and get device-local boards.
+  if (configured && !backendSession() && !guestModeActive()) {
+    return <LoginScreen />
+  }
+  const serverMode = configured && backendSession() !== null && !guestModeActive()
 
   // Server mode trusts the server's ACL; local mode validates against the
   // device registry so a stale link falls back to the dashboard.
   const valid =
-    boardId !== null && (configured || getBoard(boardId) !== undefined)
+    boardId !== null && (serverMode || getBoard(boardId) !== undefined)
 
   if (!valid) return <Dashboard onOpen={(id) => navigate(id)} />
   return <Board key={boardId} boardId={boardId!} onHome={() => navigate(null)} />

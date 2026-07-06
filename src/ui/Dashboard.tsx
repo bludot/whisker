@@ -12,9 +12,10 @@ import {
   backendUrl,
   createServerBoard,
   deleteServerBoard,
+  guestModeActive,
   listServerBoards,
   renameServerBoard,
-  setBackendUrl,
+  setGuestMode,
   signOut,
   subscribeBackend,
 } from '../collab/backend'
@@ -122,47 +123,17 @@ function BoardCard({
   )
 }
 
-/** Prompt for a whisker-server URL (shown from the local-mode header). */
-function ConnectPanel({ onDone }: { onDone: () => void }) {
-  const [url, setUrl] = useState('')
-  return (
-    <div className="connect-panel">
-      <input
-        className="login-input"
-        placeholder="https://your-whisker-server"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && url.trim()) setBackendUrl(url.trim())
-          if (e.key === 'Escape') onDone()
-        }}
-        autoFocus
-      />
-      <button
-        className="new-board-btn"
-        disabled={!url.trim()}
-        onClick={() => setBackendUrl(url.trim())}
-      >
-        Connect
-      </button>
-      <button className="login-alt" onClick={onDone}>
-        Cancel
-      </button>
-    </div>
-  )
-}
-
 /** Landing page: every board, newest edits first. Boards come from the
- *  connected whisker-server when signed in, or device-local storage. */
+ *  configured whisker-server when signed in, or device-local storage. */
 export function Dashboard({ onOpen }: { onOpen: (id: string) => void }) {
   const [, force] = useReducer((c: number) => c + 1, 0)
   useEffect(() => subscribeBackend(force), [])
-  const [connecting, setConnecting] = useState(false)
   const [serverBoards, setServerBoards] = useState<BoardMeta[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const session = backendSession()
-  const serverMode = backendUrl() !== null && session !== null
+  const serverMode =
+    backendUrl() !== null && session !== null && !guestModeActive()
 
   const reload = () => {
     if (!serverMode) {
@@ -218,17 +189,15 @@ export function Dashboard({ onOpen }: { onOpen: (id: string) => void }) {
               Sign out
             </button>
           </div>
-        ) : connecting ? (
-          <ConnectPanel onDone={() => setConnecting(false)} />
-        ) : (
-          <button
-            className="login-alt"
-            title="Sync boards through a whisker-server"
-            onClick={() => setConnecting(true)}
-          >
-            Use a server…
-          </button>
-        )}
+        ) : backendUrl() !== null ? (
+          // Guest on a configured server: offer the way back to login.
+          <div className="account">
+            <span className="account-email">Guest — boards stay on this device</span>
+            <button className="login-alt" onClick={() => setGuestMode(false)}>
+              Sign in
+            </button>
+          </div>
+        ) : null}
         <button className="new-board-btn" onClick={() => void handleCreate()}>
           + New board
         </button>

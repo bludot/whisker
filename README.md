@@ -12,6 +12,21 @@ npm run dev
 
 Boards persist locally in your browser (IndexedDB) automatically.
 
+### Connecting to a server
+
+Whisker runs fully local by default. To sync boards through a
+[whisker-server](https://github.com/bludot/whisker-server), configure the
+URL at build/start time:
+
+```sh
+# .env.local
+VITE_SERVER_URL=http://localhost:8787
+```
+
+With a server configured the app opens on a login page (email/password via
+the server's Supabase auth); **Continue as guest** keeps boards on the
+device instead. No `VITE_SERVER_URL` = no login page, local-only.
+
 ### Setup on macOS
 
 ```sh
@@ -65,6 +80,8 @@ the roadmap).
 | Touch / tablet    | two-finger pinch to zoom & pan; with a stylus, fingers pan while the pen draws |
 | Shape recognition | pen strokes that look like a rectangle/ellipse/line become the real shape (toggle in settings); lines touching shapes become attached arrows |
 | Theme             | toolbar settings → light / dark / follow system; every palette color has a per-theme variant, so boards adapt without changing the stored data |
+| Export            | toolbar ⤓ → PNG / JPEG / PDF, or a re-importable `.whisker` file |
+| Import            | toolbar ⤓ → Import, or drag a `.whisker` file onto the board (merges, fresh ids) |
 | Style defaults    | toolbar settings → default fill/border for new shapes (persisted) |
 | Delete            | `Del` (arrows attached to deleted shapes go too)           |
 | Duplicate         | `Ctrl+D`                                                   |

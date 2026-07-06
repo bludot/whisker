@@ -1,4 +1,13 @@
-import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 'pixi.js'
+import {
+  Application,
+  Assets,
+  Container,
+  Graphics,
+  Rectangle,
+  Sprite,
+  Text,
+  Texture,
+} from 'pixi.js'
 import { Camera } from './camera'
 import {
   CANVAS_COLORS,
@@ -179,6 +188,29 @@ export class BoardRenderer {
     this.camera.x = bounds.x + bounds.width / 2 - width / 2 / this.camera.zoom
     this.camera.y = bounds.y + bounds.height / 2 - height / 2 / this.camera.zoom
     this.applyCamera()
+  }
+
+  /** Render the board's content (shapes only — no grid, no selection UI)
+   *  into a canvas for export. Returns null on an empty board. */
+  exportCanvas(maxScale = 2): HTMLCanvasElement | null {
+    const get: ShapeResolver = (id) => this.editor.store.get(id)
+    const all = this.editor.store.getAll()
+    const bounds = boundsUnion(all.map((s) => boundsOf(s, get)))
+    if (!bounds) return null
+    const PAD = 40
+    const w = bounds.width + PAD * 2
+    const h = bounds.height + PAD * 2
+    // Cap the output so giant boards can't blow GPU texture limits.
+    const scale = Math.min(maxScale, 4096 / Math.max(w, h))
+    const background = `#${CANVAS_COLORS[effectiveTheme()].background
+      .toString(16)
+      .padStart(6, '0')}`
+    return this.app.renderer.extract.canvas({
+      target: this.world,
+      frame: new Rectangle(bounds.x - PAD, bounds.y - PAD, w, h),
+      resolution: scale,
+      clearColor: background,
+    }) as HTMLCanvasElement
   }
 
   /** Screen-constant sizes expressed in world units. */

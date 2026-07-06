@@ -11,12 +11,22 @@ import type { BoardMeta } from './boards'
  * re-renders, everything else reads the current state directly.
  */
 
-const URL_KEY = 'whisker-server-url'
+/** The server is configured at startup, not at runtime: set VITE_SERVER_URL
+ *  (e.g. in .env.local) and the app boots against that server. No value =
+ *  local-only mode. */
+const GUEST_KEY = 'whisker-guest-mode'
 
-let serverUrl: string | null = localStorage.getItem(URL_KEY)
+function configuredUrl(): string | null {
+  const url = (import.meta.env.VITE_SERVER_URL as string | undefined)?.trim()
+  return url ? url.replace(/\/+$/, '') : null
+}
+
+const serverUrl: string | null = configuredUrl()
 let client: GoTrueClient | null = null
 let session: Session | null = null
 let ready = false // session restore attempted
+/** "Continue as guest": use device-local boards although a server exists. */
+let guestMode = localStorage.getItem(GUEST_KEY) === 'on'
 const listeners = new Set<() => void>()
 
 function notify(): void {
@@ -41,14 +51,14 @@ export function backendReady(): boolean {
   return serverUrl === null || ready
 }
 
-export function setBackendUrl(url: string | null): void {
-  serverUrl = url ? url.replace(/\/+$/, '') : null
-  if (serverUrl) localStorage.setItem(URL_KEY, serverUrl)
-  else localStorage.removeItem(URL_KEY)
-  client = null
-  session = null
-  ready = false
-  if (serverUrl) void authClient() // kicks off session restore
+export function guestModeActive(): boolean {
+  return guestMode
+}
+
+export function setGuestMode(on: boolean): void {
+  guestMode = on
+  if (on) localStorage.setItem(GUEST_KEY, 'on')
+  else localStorage.removeItem(GUEST_KEY)
   notify()
 }
 

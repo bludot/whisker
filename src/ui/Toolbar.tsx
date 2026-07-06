@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from 'react'
+import { useEffect, useReducer, useRef } from 'react'
 import { Dropdown } from './Dropdown'
 import { Icon, type IconName } from './Icons'
 import { NumberField } from './NumberField'
@@ -10,6 +10,15 @@ import {
   type ThemePreference,
 } from './theme'
 import { PALETTE, type LineDash, type Tool } from '../scene/types'
+import { deserializeBoard, serializeBoard } from '../scene/serialize'
+import {
+  downloadBlob,
+  exportBoardImage,
+  exportBoardPdf,
+  exportFilename,
+} from '../canvas/export'
+import { newShapeId } from '../collab/store'
+import type { BoardRenderer } from '../canvas/renderer'
 import type { Editor } from '../editor/Editor'
 
 const DASH_OPTIONS: { value: LineDash; icon: IconName; label: string }[] = [
@@ -36,17 +45,48 @@ const TOOLS: { id: Tool; label: string; icon: IconName }[] = [
 
 export function Toolbar({
   editor,
+  renderer,
   onHome,
 }: {
   editor: Editor
+  renderer?: BoardRenderer | null
   onHome?: () => void
 }) {
   const [, force] = useReducer((c: number) => c + 1, 0)
   useEffect(() => editor.subscribe(force), [editor])
   useEffect(() => subscribeTheme(force), [])
+  const importInput = useRef<HTMLInputElement>(null)
 
   const hasSelection = editor.selection.size > 0
   const themePref = getPreference()
+
+  const exportImage = async (kind: 'png' | 'jpeg') => {
+    if (!renderer) return
+    const blob = await exportBoardImage(renderer, kind)
+    if (blob) downloadBlob(blob, exportFilename(kind === 'png' ? 'png' : 'jpg'))
+  }
+  const exportPdf = async () => {
+    if (!renderer) return
+    const blob = await exportBoardPdf(renderer)
+    if (blob) downloadBlob(blob, exportFilename('pdf'))
+  }
+  const exportWhisker = () => {
+    const blob = new Blob([serializeBoard(editor.store.getAll())], {
+      type: 'application/json',
+    })
+    downloadBlob(blob, exportFilename('whisker'))
+  }
+  const importWhisker = async (file: File) => {
+    try {
+      const shapes = deserializeBoard(await file.text(), newShapeId)
+      let z = editor.store.topZ()
+      for (const s of shapes) editor.store.add({ ...s, z: ++z })
+      editor.select(shapes.map((s) => s.id))
+      renderer?.zoomToFit()
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   return (
     <div className="toolbar">
@@ -91,6 +131,45 @@ export function Toolbar({
         <Icon name="trash" />
       </button>
       <span className="divider" />
+      <Dropdown title="Export & import" chip={<Icon name="download" />}>
+        <div className="dd-row">
+          <span className="dd-caption">Export</span>
+          <button className="popup-btn text" disabled={!renderer} onClick={() => void exportImage('png')}>
+            PNG
+          </button>
+          <button className="popup-btn text" disabled={!renderer} onClick={() => void exportImage('jpeg')}>
+            JPEG
+          </button>
+          <button className="popup-btn text" disabled={!renderer} onClick={() => void exportPdf()}>
+            PDF
+          </button>
+          <button className="popup-btn text" title="Whisker board file — can be imported again" onClick={exportWhisker}>
+            .whisker
+          </button>
+        </div>
+        <div className="dd-row">
+          <span className="dd-caption">Import</span>
+          <button
+            className="popup-btn text"
+            title="Add shapes from a .whisker file to this board"
+            onClick={() => importInput.current?.click()}
+          >
+            <Icon name="upload" />
+            &nbsp;.whisker file…
+          </button>
+          <input
+            ref={importInput}
+            type="file"
+            accept=".whisker,application/json"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) void importWhisker(f)
+              e.target.value = ''
+            }}
+          />
+        </div>
+      </Dropdown>
       <Dropdown title="Settings" chip={<Icon name="settings" />}>
         <div className="dd-row">
           <span className="dd-caption">Theme</span>

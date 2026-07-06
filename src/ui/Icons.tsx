@@ -144,6 +144,18 @@ const ICONS: Record<string, ReactNode> = {
       strokeWidth="1.8"
     />
   ),
+  download: (
+    <>
+      <path d="M8 2v7.5M4.8 6.5L8 9.7l3.2-3.2" />
+      <path d="M2.5 13h11" />
+    </>
+  ),
+  upload: (
+    <>
+      <path d="M8 9.7V2.2M4.8 5.4L8 2.2l3.2 3.2" />
+      <path d="M2.5 13h11" />
+    </>
+  ),
   settings: (
     <>
       <circle cx="8" cy="8" r="2.4" />

@@ -2,6 +2,7 @@ import type { BoardRenderer, HandleId } from './renderer'
 import type { Editor } from '../editor/Editor'
 import { newShapeId } from '../collab/store'
 import { recognizeStroke, type RecognizedStroke } from '../scene/recognize'
+import { deserializeBoard } from '../scene/serialize'
 import {
   ANCHOR_POSITIONS,
   anchorAt,
@@ -211,6 +212,22 @@ export class InteractionController {
         this.readImageFile(file, at)
         return
       }
+      if (file.name.endsWith('.whisker')) {
+        void this.importWhiskerFile(file)
+        return
+      }
+    }
+  }
+
+  private async importWhiskerFile(file: File): Promise<void> {
+    try {
+      const shapes = deserializeBoard(await file.text(), newShapeId)
+      let z = this.editor.store.topZ()
+      for (const s of shapes) this.editor.store.add({ ...s, z: ++z })
+      this.editor.select(shapes.map((s) => s.id))
+      this.renderer.zoomToFit()
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err))
     }
   }
 

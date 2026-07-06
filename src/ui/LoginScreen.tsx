@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { backendUrl, setBackendUrl, signIn, signUp } from '../collab/backend'
+import { backendUrl, setGuestMode, signIn, signUp } from '../collab/backend'
 
 /** Email/password gate shown when a backend is configured but no one is
- *  signed in. Signup and signin against the same form; "stay local"
- *  disconnects the backend and returns to device-only boards. */
+ *  signed in. Signup and signin against the same form; "continue as guest"
+ *  keeps the configured server but uses device-only boards. */
 export function LoginScreen() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -58,8 +58,8 @@ export function LoginScreen() {
         <button className="login-alt" disabled={busy} onClick={() => submit('up')}>
           Create account
         </button>
-        <button className="login-alt" onClick={() => setBackendUrl(null)}>
-          Stay local (no server)
+        <button className="login-alt" onClick={() => setGuestMode(true)}>
+          Continue as guest
         </button>
       </div>
     </div>
