@@ -1,7 +1,7 @@
 {
   "name": "whisker",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,12 +20,15 @@
     "yjs": "^13.6.31"
   },
   "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "happy-dom": "^20.10.6",
     "oxlint": "^1.71.0",
+    "semantic-release": "^25.0.5",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
     "vitest": "^4.1.9"

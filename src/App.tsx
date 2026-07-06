@@ -102,12 +102,11 @@ function Board({ boardId, onHome }: { boardId: string; onHome: () => void }) {
       <Toolbar editor={editor} renderer={renderer} onHome={onHome} />
       {renderer && <StylePopup editor={editor} renderer={renderer} />}
       {renderer && <ZoomControls renderer={renderer} />}
-      {import.meta.env.DEV && (
-        // Dev-only build marker: confirms a device runs the current code.
-        <div style={{ position: 'absolute', left: 8, bottom: 6, fontSize: 10, opacity: 0.45, pointerEvents: 'none' }}>
-          ink-first v1
-        </div>
-      )}
+      {/* Build marker: confirms which release a device is running. */}
+      <div style={{ position: 'absolute', left: 8, bottom: 6, fontSize: 10, opacity: 0.45, pointerEvents: 'none' }}>
+        v{__APP_VERSION__}
+        {import.meta.env.DEV && ' (dev)'}
+      </div>
     </div>
   )
 }

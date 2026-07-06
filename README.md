@@ -132,6 +132,15 @@ src/
 - [ ] Export (PNG/SVG)
 - [ ] Mobile/touch gestures (pinch zoom)
 
+## Releases
+
+Versioning is automated with [semantic-release](https://github.com/semantic-release/semantic-release):
+every push to `main` is analyzed and [Conventional Commits](https://www.conventionalcommits.org)
+drive the version — `fix:` → patch, `feat:` → minor, `feat!:`/`BREAKING CHANGE:` → major.
+Releases update `CHANGELOG.md`, tag the repo, publish GitHub release notes,
+and bump `package.json` (which the app shows in its corner version marker).
+Commits without a conventional prefix don't trigger a release.
+
 ## License
 
 [MIT](LICENSE)
