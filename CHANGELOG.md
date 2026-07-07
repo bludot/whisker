@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/ThatCatDev/whisker/compare/v1.3.0...v1.4.0) (2026-07-07)
+
+
+### Features
+
+* bend handle for hand-tuned connector curves ([99f413a](https://github.com/ThatCatDev/whisker/commit/99f413a72f5355e5309c6f34d6b93d11a99472c2))
+
 # [1.3.0](https://github.com/ThatCatDev/whisker/compare/v1.2.0...v1.3.0) (2026-07-07)
 
 
