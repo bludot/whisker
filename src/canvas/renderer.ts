@@ -21,6 +21,7 @@ import type { Editor } from '../editor/Editor'
 import {
   boundsOf,
   boundsUnion,
+  bendPointOnChord,
   connectorEndpoints,
   connectorMidpoint,
   connectorPath,
@@ -250,15 +251,33 @@ export class BoardRenderer {
     ]
   }
 
-  /** World position of the bend handle on a lone selected straight or
-   *  curved connector, or null. */
-  bendHandlePosition(): Point | null {
+  /** Bend handles on a lone selected straight or curved connector. The
+   *  middle handle always shows; once it has been dragged, two more
+   *  appear at the quarter points for finer bending. Empty when hidden. */
+  bendHandlePositions(): { which: 'q1' | 'mid' | 'q3'; p: Point }[] {
     const selected = this.editor.getSelectedShapes()
-    if (selected.length !== 1 || selected[0].type !== 'connector') return null
+    if (selected.length !== 1 || selected[0].type !== 'connector') return []
     const conn = selected[0]
-    if ((conn.route ?? 'straight') === 'elbow') return null
+    if ((conn.route ?? 'straight') === 'elbow') return []
     const get: ShapeResolver = (id) => this.editor.store.get(id)
-    return connectorMidpoint(conn, get)
+    const manual = conn.curvature ?? null
+    if (manual === null) {
+      return [{ which: 'mid', p: connectorMidpoint(conn, get) }]
+    }
+    const { a, b } = connectorEndpoints(conn, get)
+    const path = connectorPath(conn, get)
+    const sample = (f: number) => path[Math.round((path.length - 1) * f)]
+    return [
+      {
+        which: 'q1',
+        p: conn.bendQ1 != null ? bendPointOnChord(a, b, 0.25, conn.bendQ1) : sample(0.25),
+      },
+      { which: 'mid', p: bendPointOnChord(a, b, 0.5, manual) },
+      {
+        which: 'q3',
+        p: conn.bendQ3 != null ? bendPointOnChord(a, b, 0.75, conn.bendQ3) : sample(0.75),
+      },
+    ]
   }
 
   /** World position of the rotation handle: floats diagonally off the
@@ -359,9 +378,8 @@ export class BoardRenderer {
           .fill(0xffffff)
           .stroke({ color: ACCENT, width: thin })
       }
-      const bend = this.bendHandlePosition()
-      if (bend) {
-        o.circle(bend.x, bend.y, this.worldPx(4.5))
+      for (const { which, p } of this.bendHandlePositions()) {
+        o.circle(p.x, p.y, this.worldPx(which === 'mid' ? 4.5 : 3.5))
           .fill(ACCENT)
           .stroke({ color: 0xffffff, width: thin })
       }

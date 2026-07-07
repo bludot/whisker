@@ -122,6 +122,10 @@ export interface ConnectorShape extends ShapeBase, Partial<ConnectorStyleProps> 
    *  offset (world px) of the curve's midpoint from the straight chord.
    *  Absent/null = automatic (tangent-derived) curvature. */
   curvature?: number | null
+  /** Extra bend offsets at the quarter points, unlocked once the middle
+   *  bend is set (their handles appear left and right of it). */
+  bendQ1?: number | null
+  bendQ3?: number | null
 }
 
 export type Shape =
@@ -374,26 +378,32 @@ export function connectorPath(c: ConnectorShape, get: ShapeResolver): Point[] {
     // Straight already looks right — asking for "curvy" shouldn't bend a
     // line that has no reason to bend. A hand-flattened curve stays flat.
     if (manual === null && Math.max(misA, misB) < 0.02) return [a, b]
-    if (manual !== null && Math.abs(manual) < 2 && Math.max(misA, misB) < 0.02)
-      return [a, b]
+
+    if (manual !== null) {
+      // Hand-bent: a spline through the dragged bend points. The quarter
+      // bends (if touched) add detail left and right of the middle one.
+      const points: Point[] = [a]
+      if (c.bendQ1 != null) points.push(bendPointOnChord(a, b, 0.25, c.bendQ1))
+      points.push(bendPointOnChord(a, b, 0.5, manual))
+      if (c.bendQ3 != null) points.push(bendPointOnChord(a, b, 0.75, c.bendQ3))
+      points.push(b)
+      const flat =
+        points.every((p, i) => {
+          if (i === 0 || i === points.length - 1) return true
+          const k = perpOffset(a, b, p)
+          return Math.abs(k) < 2
+        }) && Math.max(misA, misB) < 0.02
+      if (flat) return [a, b]
+      return catmullRomThrough(points, ta, tb)
+    }
+
     // Miro-style handles: strong tangents at roughly half the span (never
     // below a minimum, so close shapes still bulge outward) give deep,
     // confident S-curves. Aligned tangents lie on the chord, so the same
     // math renders side-by-side shapes dead straight.
     const reach = Math.min(Math.max(len * 0.5, 40), 250)
-    let p1 = { x: a.x + ta.x * reach, y: a.y + ta.y * reach }
-    let p2 = { x: b.x + tb.x * reach, y: b.y + tb.y * reach }
-    if (manual !== null) {
-      // Both controls shift by v so the curve midpoint lands `manual` px
-      // off the chord: B(1/2) moves by 3/4 of the control displacement.
-      const perp = { x: -d.y, y: d.x }
-      const auto =
-        (perp.x * (p1.x + p2.x - a.x - b.x) + perp.y * (p1.y + p2.y - a.y - b.y)) *
-        (3 / 8)
-      const v = (manual - auto) / 0.75
-      p1 = { x: p1.x + perp.x * v, y: p1.y + perp.y * v }
-      p2 = { x: p2.x + perp.x * v, y: p2.y + perp.y * v }
-    }
+    const p1 = { x: a.x + ta.x * reach, y: a.y + ta.y * reach }
+    const p2 = { x: b.x + tb.x * reach, y: b.y + tb.y * reach }
     const pts: Point[] = []
     const STEPS = 32
     for (let i = 0; i <= STEPS; i++) {
@@ -407,6 +417,65 @@ export function connectorPath(c: ConnectorShape, get: ShapeResolver): Point[] {
     return pts
   }
   return [a, b]
+}
+
+/** Point `t` of the way along the a→b chord, shifted `k` px along the
+ *  chord's perpendicular (the coordinate system bend offsets live in). */
+export function bendPointOnChord(a: Point, b: Point, t: number, k: number): Point {
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
+  const perp = { x: -(b.y - a.y) / len, y: (b.x - a.x) / len }
+  return {
+    x: a.x + (b.x - a.x) * t + perp.x * k,
+    y: a.y + (b.y - a.y) * t + perp.y * k,
+  }
+}
+
+/** Signed perpendicular distance of `p` from the a→b chord. */
+export function perpOffset(a: Point, b: Point, p: Point): number {
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
+  const perp = { x: -(b.y - a.y) / len, y: (b.x - a.x) / len }
+  return (p.x - a.x) * perp.x + (p.y - a.y) * perp.y
+}
+
+/** Smooth spline through the given points; end tangents follow the
+ *  connector's exit directions. Uniform Catmull-Rom, sampled. */
+function catmullRomThrough(points: Point[], ta: Point, tb: Point): Point[] {
+  const first = points[0]
+  const last = points[points.length - 1]
+  const d0 = Math.hypot(points[1].x - first.x, points[1].y - first.y)
+  const dn = Math.hypot(
+    last.x - points[points.length - 2].x,
+    last.y - points[points.length - 2].y,
+  )
+  // Phantom points beyond each end shape the exit tangents.
+  const pre = { x: first.x - ta.x * d0, y: first.y - ta.y * d0 }
+  const post = { x: last.x - tb.x * dn, y: last.y - tb.y * dn }
+  const P = [pre, ...points, post]
+  const out: Point[] = []
+  const SEG_STEPS = 16
+  for (let i = 1; i + 2 < P.length; i++) {
+    const p0 = P[i - 1]
+    const p1 = P[i]
+    const p2 = P[i + 1]
+    const p3 = P[i + 2]
+    const m1 = { x: (p2.x - p0.x) / 2, y: (p2.y - p0.y) / 2 }
+    const m2 = { x: (p3.x - p1.x) / 2, y: (p3.y - p1.y) / 2 }
+    const from = i === 1 ? 0 : 1
+    for (let j = from; j <= SEG_STEPS; j++) {
+      const t = j / SEG_STEPS
+      const t2 = t * t
+      const t3 = t2 * t
+      const h00 = 2 * t3 - 3 * t2 + 1
+      const h10 = t3 - 2 * t2 + t
+      const h01 = -2 * t3 + 3 * t2
+      const h11 = t3 - t2
+      out.push({
+        x: h00 * p1.x + h10 * m1.x + h01 * p2.x + h11 * m2.x,
+        y: h00 * p1.y + h10 * m1.y + h01 * p2.y + h11 * m2.y,
+      })
+    }
+  }
+  return out
 }
 
 /** Midpoint of a connector's drawn path (where the bend handle sits). */

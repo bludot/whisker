@@ -56,7 +56,7 @@ function makeRenderer(editor: Editor): BoardRenderer {
     },
     arrowHandlePositions: () => [],
     rotationHandlePosition: () => null,
-    bendHandlePosition: () => null,
+    bendHandlePositions: () => [],
     drawPreview: null,
     createPreview: null,
     connectPreview: null,

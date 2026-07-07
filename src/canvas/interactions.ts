@@ -16,6 +16,7 @@ import {
   denormalizedPoints,
   hitTest,
   isCenterAnchor,
+  perpOffset,
   MIN_SIZE,
   pointOnShape,
   STROKE_BREAK,
@@ -59,7 +60,7 @@ type Session =
       tapSelects?: boolean
     }
   | { kind: 'create'; type: 'sticky' | GeoKind; startW: Point }
-  | { kind: 'bend'; id: ShapeId }
+  | { kind: 'bend'; id: ShapeId; which: 'q1' | 'mid' | 'q3' }
   | {
       kind: 'rotate'
       id: ShapeId
@@ -480,6 +481,16 @@ export class InteractionController {
     this.editor.setSessionActive(this.session.kind !== 'none')
   }
 
+  /** Which bend handle (if any) is under the pointer. */
+  private bendHandleAt(w: Point): 'q1' | 'mid' | 'q3' | null {
+    for (const { which, p } of this.renderer.bendHandlePositions()) {
+      if (Math.hypot(w.x - p.x, w.y - p.y) <= this.renderer.worldPx(9)) {
+        return which
+      }
+    }
+    return null
+  }
+
   /** Endpoint of the single selected connector under the pointer, if any. */
   private connectorEndpointAt(
     w: Point,
@@ -560,10 +571,14 @@ export class InteractionController {
       return
     }
 
-    // Bend handle on a lone selected connector.
-    const bendPos = this.renderer.bendHandlePosition()
-    if (bendPos && Math.hypot(w.x - bendPos.x, w.y - bendPos.y) <= this.renderer.worldPx(9)) {
-      this.session = { kind: 'bend', id: this.editor.getSelectedShapes()[0].id }
+    // Bend handles on a lone selected connector.
+    const bendHit = this.bendHandleAt(w)
+    if (bendHit) {
+      this.session = {
+        kind: 'bend',
+        id: this.editor.getSelectedShapes()[0].id,
+        which: bendHit,
+      }
       return
     }
 
@@ -899,14 +914,13 @@ export class InteractionController {
         const { a, b } = connectorEndpoints(conn, get)
         const len = Math.hypot(b.x - a.x, b.y - a.y)
         if (len < 2) return
-        // Signed perpendicular distance of the pointer from the chord.
-        const perp = { x: -(b.y - a.y) / len, y: (b.x - a.x) / len }
-        let k = (w.x - a.x) * perp.x + (w.y - a.y) * perp.y
+        let k = perpOffset(a, b, w)
         if (Math.abs(k) < this.renderer.worldPx(4)) k = 0 // click into flat
-        this.editor.store.update(this.session.id, {
-          route: 'curve',
-          curvature: k,
-        })
+        const patch: Record<string, unknown> = { route: 'curve' }
+        if (this.session.which === 'mid') patch.curvature = k
+        else if (this.session.which === 'q1') patch.bendQ1 = k
+        else patch.bendQ3 = k
+        this.editor.store.update(this.session.id, patch)
         return
       }
       case 'rotate': {
@@ -1436,11 +1450,12 @@ export class InteractionController {
     if (this.inkBuffer) return
     if (this.editor.tool !== 'select') return
     const w = this.world(e)
-    // Double-click the bend handle: back to automatic curvature.
-    const bendPos = this.renderer.bendHandlePosition()
-    if (bendPos && Math.hypot(w.x - bendPos.x, w.y - bendPos.y) <= this.renderer.worldPx(9)) {
+    // Double-click any bend handle: back to automatic curvature.
+    if (this.bendHandleAt(w)) {
       this.editor.store.update(this.editor.getSelectedShapes()[0].id, {
         curvature: null,
+        bendQ1: null,
+        bendQ3: null,
       })
       return
     }
@@ -1474,10 +1489,9 @@ export class InteractionController {
     else {
       const hit = this.topShapeAt(w)
       const rotPos = this.renderer.rotationHandlePosition()
-      const bendPos = this.renderer.bendHandlePosition()
       if (rotPos && Math.hypot(w.x - rotPos.x, w.y - rotPos.y) <= this.renderer.worldPx(9)) {
         cursor = 'grab'
-      } else if (bendPos && Math.hypot(w.x - bendPos.x, w.y - bendPos.y) <= this.renderer.worldPx(9)) {
+      } else if (this.bendHandleAt(w)) {
         cursor = 'move'
       } else if (this.arrowHandleHit(w)) cursor = 'crosshair'
       else if (this.connectorEndpointAt(w)) cursor = 'crosshair'
