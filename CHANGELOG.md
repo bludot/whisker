@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/ThatCatDev/whisker/compare/v1.2.0...v1.3.0) (2026-07-07)
+
+
+### Features
+
+* tangent-aware bezier connectors with side-snapped attachment ([00c518b](https://github.com/ThatCatDev/whisker/commit/00c518ba8a6b90e284ce709592ae41799a5e37dc))
+
 # [1.2.0](https://github.com/ThatCatDev/whisker/compare/v1.1.0...v1.2.0) (2026-07-07)
 
 
