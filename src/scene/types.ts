@@ -376,11 +376,13 @@ export function connectorPath(c: ConnectorShape, get: ShapeResolver): Point[] {
     if (manual === null && Math.max(misA, misB) < 0.02) return [a, b]
     if (manual !== null && Math.abs(manual) < 2 && Math.max(misA, misB) < 0.02)
       return [a, b]
-    const reach = Math.min(len * 0.5, 180)
-    const ha = reach * (0.2 + 0.8 * misA)
-    const hb = reach * (0.2 + 0.8 * misB)
-    let p1 = { x: a.x + ta.x * ha, y: a.y + ta.y * ha }
-    let p2 = { x: b.x + tb.x * hb, y: b.y + tb.y * hb }
+    // Miro-style handles: strong tangents at roughly half the span (never
+    // below a minimum, so close shapes still bulge outward) give deep,
+    // confident S-curves. Aligned tangents lie on the chord, so the same
+    // math renders side-by-side shapes dead straight.
+    const reach = Math.min(Math.max(len * 0.5, 40), 250)
+    let p1 = { x: a.x + ta.x * reach, y: a.y + ta.y * reach }
+    let p2 = { x: b.x + tb.x * reach, y: b.y + tb.y * reach }
     if (manual !== null) {
       // Both controls shift by v so the curve midpoint lands `manual` px
       // off the chord: B(1/2) moves by 3/4 of the control displacement.
