@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/ThatCatDev/whisker/compare/v1.5.0...v1.6.0) (2026-07-07)
+
+
+### Features
+
+* freeform connector waypoints, Miro-style ([d212322](https://github.com/ThatCatDev/whisker/commit/d2123227f5e59f526b27add6110dc66d9de73657))
+
 # [1.5.0](https://github.com/ThatCatDev/whisker/compare/v1.4.1...v1.5.0) (2026-07-07)
 
 
