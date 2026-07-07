@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/ThatCatDev/whisker/compare/v1.1.0...v1.2.0) (2026-07-07)
+
+
+### Features
+
+* pipe shape and free rotation ([989932e](https://github.com/ThatCatDev/whisker/commit/989932e6d94048202c5299247c937f204a7a9b04))
+
 # [1.1.0](https://github.com/ThatCatDev/whisker/compare/v1.0.3...v1.1.0) (2026-07-07)
 
 
