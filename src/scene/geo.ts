@@ -24,6 +24,7 @@ export type GeoKind =
   | 'speech-bubble'
   | 'semicircle'
   | 'cylinder'
+  | 'pipe'
 
 export const GEO_KINDS: { kind: GeoKind; label: string }[] = [
   { kind: 'rect', label: 'Rectangle' },
@@ -44,6 +45,7 @@ export const GEO_KINDS: { kind: GeoKind; label: string }[] = [
   { kind: 'speech-bubble', label: 'Speech bubble' },
   { kind: 'semicircle', label: 'Semicircle' },
   { kind: 'cylinder', label: 'Cylinder' },
+  { kind: 'pipe', label: 'Pipe' },
 ]
 
 /** Regular polygon inscribed in the unit box, first vertex at the top. */
@@ -156,6 +158,8 @@ export function geoDefaultSize(kind: GeoKind): { width: number; height: number }
       return { width: 200, height: 200 }
     case 'semicircle':
       return { width: 240, height: 120 }
+    case 'pipe':
+      return { width: 280, height: 120 }
     default:
       return { width: 240, height: 160 }
   }

@@ -48,6 +48,8 @@ interface ShapeBase extends StyleProps {
   width: number
   height: number
   z: number
+  /** Radians, clockwise around the shape's center. Connectors ignore it. */
+  rotation?: number
 }
 
 export type TextAlign = 'left' | 'center' | 'right'
@@ -146,9 +148,27 @@ export function center(s: Shape): Point {
   return { x: s.x + s.width / 2, y: s.y + s.height / 2 }
 }
 
+export function rotatePoint(p: Point, c: Point, angle: number): Point {
+  if (!angle) return p
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  const dx = p.x - c.x
+  const dy = p.y - c.y
+  return { x: c.x + dx * cos - dy * sin, y: c.y + dx * sin + dy * cos }
+}
+
 /** Point on the shape's edge along the ray from its center toward `towards`. */
 export function anchorPoint(shape: Shape, towards: Point): Point {
   const c = center(shape)
+  const rot = shape.rotation ?? 0
+  if (rot) {
+    // Solve in the shape's local (unrotated) frame, rotate the result back.
+    const local = anchorPoint(
+      { ...shape, rotation: 0 },
+      rotatePoint(towards, c, -rot),
+    )
+    return rotatePoint(local, c, rot)
+  }
   const dx = towards.x - c.x
   const dy = towards.y - c.y
   if (dx === 0 && dy === 0) return c
@@ -184,7 +204,8 @@ export const ANCHOR_POSITIONS: Point[] = [
 ]
 
 export function pointOnShape(s: Shape, anchor: Point): Point {
-  return { x: s.x + anchor.x * s.width, y: s.y + anchor.y * s.height }
+  const p = { x: s.x + anchor.x * s.width, y: s.y + anchor.y * s.height }
+  return s.rotation ? rotatePoint(p, center(s), s.rotation) : p
 }
 
 export function isCenterAnchor(a: Point | null | undefined): boolean {
@@ -283,6 +304,21 @@ export function denormalizedPoints(d: DrawShape): number[] {
 }
 
 export function boundsOf(shape: Shape, get: ShapeResolver): Bounds {
+  if (shape.type !== 'connector' && shape.rotation) {
+    // AABB of the rotated frame.
+    const c = center(shape)
+    const corners = [
+      { x: shape.x, y: shape.y },
+      { x: shape.x + shape.width, y: shape.y },
+      { x: shape.x + shape.width, y: shape.y + shape.height },
+      { x: shape.x, y: shape.y + shape.height },
+    ].map((p) => rotatePoint(p, c, shape.rotation!))
+    const xs = corners.map((p) => p.x)
+    const ys = corners.map((p) => p.y)
+    const x0 = Math.min(...xs)
+    const y0 = Math.min(...ys)
+    return { x: x0, y: y0, width: Math.max(...xs) - x0, height: Math.max(...ys) - y0 }
+  }
   if (shape.type === 'connector') {
     const pts = connectorPath(shape, get)
     let x0 = Infinity
@@ -346,6 +382,10 @@ export function hitTest(
   get: ShapeResolver,
   tolerance: number,
 ): boolean {
+  // Rotated shapes: test in their local (unrotated) frame.
+  if (shape.type !== 'connector' && shape.rotation) {
+    p = rotatePoint(p, center(shape), -shape.rotation)
+  }
   switch (shape.type) {
     case 'sticky':
     case 'image':

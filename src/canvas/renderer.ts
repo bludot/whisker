@@ -25,6 +25,7 @@ import {
   connectorPath,
   denormalizedPoints,
   isResizable,
+  rotatePoint,
   type Bounds,
   type ConnectorShape,
   type GeoShape,
@@ -248,6 +249,23 @@ export class BoardRenderer {
     ]
   }
 
+  /** World position of the rotation handle: floats diagonally off the
+   *  bottom-right corner of a lone selected shape (rotating with it), or
+   *  null. Bottom-right stays clear of the style popup (above), the
+   *  arrow-out edge dots and the corner resize handles. */
+  rotationHandlePosition(): Point | null {
+    const selected = this.editor.getSelectedShapes()
+    if (selected.length !== 1 || selected[0].type === 'connector') return null
+    const s = selected[0]
+    const c = { x: s.x + s.width / 2, y: s.y + s.height / 2 }
+    const off = this.worldPx(18)
+    return rotatePoint(
+      { x: s.x + s.width + off, y: s.y + s.height + off },
+      c,
+      s.rotation ?? 0,
+    )
+  }
+
   /** Bounds of the resizable part of the selection, or null. */
   selectionBounds(): Bounds | null {
     const get: ShapeResolver = (id) => this.editor.store.get(id)
@@ -296,6 +314,21 @@ export class BoardRenderer {
         o.stroke({ color: ACCENT, width: thin, alpha: 0.6 })
         continue
       }
+      if (s.rotation) {
+        // Outline follows the rotated frame, not the AABB.
+        const c = { x: s.x + s.width / 2, y: s.y + s.height / 2 }
+        const corners = [
+          { x: s.x, y: s.y },
+          { x: s.x + s.width, y: s.y },
+          { x: s.x + s.width, y: s.y + s.height },
+          { x: s.x, y: s.y + s.height },
+        ].map((p) => rotatePoint(p, c, s.rotation!))
+        o.poly(corners.flatMap((p) => [p.x, p.y])).stroke({
+          color: ACCENT,
+          width: thin,
+        })
+        continue
+      }
       const b = boundsOf(s, get)
       o.rect(b.x, b.y, b.width, b.height).stroke({
         color: ACCENT,
@@ -314,14 +347,36 @@ export class BoardRenderer {
       }
     }
 
+    // Resize handles only for unrotated selections: resizing a rotated
+    // frame through axis-aligned handles distorts unpredictably.
     const rb = this.selectionBounds()
-    if (rb) {
+    if (rb && !selected.some((s) => s.type !== 'connector' && s.rotation)) {
       const size = this.worldPx(10)
       for (const p of Object.values(this.handlePositions(rb))) {
         o.rect(p.x - size / 2, p.y - size / 2, size, size)
           .fill(0xffffff)
           .stroke({ color: ACCENT, width: thin })
       }
+    }
+
+    // Rotation handle on a lone selected shape.
+    const rp = this.rotationHandlePosition()
+    if (rp) {
+      const s = selected[0]
+      const c = { x: s.x + s.width / 2, y: s.y + s.height / 2 }
+      const corner = rotatePoint(
+        { x: s.x + s.width, y: s.y + s.height },
+        c,
+        s.rotation ?? 0,
+      )
+      o.moveTo(corner.x, corner.y).lineTo(rp.x, rp.y).stroke({
+        color: ACCENT,
+        width: this.worldPx(1),
+        alpha: 0.6,
+      })
+      o.circle(rp.x, rp.y, this.worldPx(5.5))
+        .fill(0xffffff)
+        .stroke({ color: ACCENT, width: thin })
     }
 
     if (this.marquee) {
@@ -500,7 +555,16 @@ function buildShape(
   const node = new Container()
   const g = new Graphics()
   node.addChild(g)
-  if (shape.type !== 'connector') node.position.set(shape.x, shape.y)
+  if (shape.type !== 'connector') {
+    if (shape.rotation) {
+      // Rotate around the shape's center.
+      node.pivot.set(shape.width / 2, shape.height / 2)
+      node.position.set(shape.x + shape.width / 2, shape.y + shape.height / 2)
+      node.rotation = shape.rotation
+    } else {
+      node.position.set(shape.x, shape.y)
+    }
+  }
 
   const addLabel = (s: StickyShape | GeoShape) => {
     if (!s.text || s.id === editingId) return
@@ -718,6 +782,34 @@ function drawGeo(
     return
   }
 
+  if (shape.geo === 'pipe') {
+    // A cylinder on its side: full cap ellipse on the right, bulge arc on
+    // the left, straight walls between.
+    const capW = Math.min(w * 0.18, h * 0.35)
+    g.ellipse(capW / 2, h / 2, capW / 2, h / 2)
+    g.rect(capW / 2, 0, w - capW, h)
+    g.ellipse(w - capW / 2, h / 2, capW / 2, h / 2)
+    g.fill(fill)
+    if (stroke.width > 0) {
+      const right = ellipseSideCap(capW, h, w - capW, false)
+      const leftHalf = ellipseSideCap(capW, h, 0, true)
+      const walls: Point[][] = [
+        [{ x: capW / 2, y: 0 }, { x: w - capW / 2, y: 0 }],
+        [{ x: capW / 2, y: h }, { x: w - capW / 2, y: h }],
+      ]
+      for (const p of [right, leftHalf, ...walls]) {
+        if (dash === 'solid') {
+          g.moveTo(p[0].x, p[0].y)
+          for (let i = 1; i < p.length; i++) g.lineTo(p[i].x, p[i].y)
+          g.stroke(stroke)
+        } else {
+          strokeSubpaths(g, [p], stroke, dash)
+        }
+      }
+    }
+    return
+  }
+
   const outline = geoOutline(shape.geo, w, h)
   if (!outline) {
     g.rect(0, 0, w, h).fill(fill)
@@ -731,6 +823,21 @@ function drawGeo(
   g.poly(outline).fill(fill)
   path.push(path[0]) // close the stroke
   strokePath(path)
+}
+
+/** Full or left-half vertical ellipse outline for the pipe caps. */
+function ellipseSideCap(capW: number, h: number, left: number, leftHalf: boolean): Point[] {
+  const cx = left + capW / 2
+  const cy = h / 2
+  const steps = 32
+  const from = leftHalf ? Math.PI / 2 : 0
+  const to = leftHalf ? (3 * Math.PI) / 2 : 2 * Math.PI
+  const out: Point[] = []
+  for (let i = 0; i <= steps; i++) {
+    const a = from + ((to - from) * i) / steps
+    out.push({ x: cx + (capW / 2) * Math.cos(a), y: cy + (h / 2) * Math.sin(a) })
+  }
+  return out
 }
 
 /** Full or lower-half ellipse outline for the cylinder caps. */

@@ -64,9 +64,10 @@ the roadmap).
 | Zoom              | `Ctrl`+scroll, the bottom-right controls, `Ctrl+0` = 100%  |
 | Pen               | `P` — freehand drawing                                     |
 | Sticky note       | `S` — click to place (or drag to size); starts editing immediately |
-| Shapes            | toolbar picker with 18 shapes (rectangle, ellipse, triangle, diamond, star, arrows, speech bubble, cylinder, …); `R`/`O` jump to rectangle/ellipse; click to place or drag to size |
+| Shapes            | toolbar picker with 19 shapes (rectangle, ellipse, triangle, diamond, star, arrows, speech bubble, cylinder, pipe, …); `R`/`O` jump to rectangle/ellipse; click to place or drag to size |
 | Arrow             | hover a shape and drag from one of the four edge dots — or `C` to drag between any two points; endpoints click into corner/edge/center anchors or pin anywhere |
 | Re-anchor         | select an arrow, drag either endpoint                      |
+| Rotate            | drag the corner handle on a selected shape; snaps to 15° steps (rotate back to 0° to resize) |
 | Edit text         | double-click a sticky/rect/ellipse; `Esc`/`Ctrl+Enter` done |
 | Style             | select shapes → context bar chips open popovers: fill, border, text, arrow style |
 | Z-order           | Order popover, or `]`/`[` step forward/back, `Shift+]`/`Shift+[` to front/back |

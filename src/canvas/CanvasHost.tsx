@@ -66,6 +66,8 @@ function TextEditorOverlay({
         fontWeight: shape.bold ? 700 : 400,
         padding: 12 * zoom,
         textAlign: shape.textAlign ?? 'center',
+        transform: shape.rotation ? `rotate(${shape.rotation}rad)` : undefined,
+        transformOrigin: 'center center',
         color: `#${labelColor(shape.fillColor, shape.fillOpacity)
           .toString(16)
           .padStart(6, '0')}`,

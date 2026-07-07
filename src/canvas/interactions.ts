@@ -59,6 +59,13 @@ type Session =
       tapSelects?: boolean
     }
   | { kind: 'create'; type: 'sticky' | GeoKind; startW: Point }
+  | {
+      kind: 'rotate'
+      id: ShapeId
+      center: Point
+      /** pointer angle at grab minus the shape's rotation at grab */
+      grabOffset: number
+    }
   | { kind: 'pinch'; lastMid: Point; lastDist: number }
   | {
       kind: 'connect'
@@ -312,6 +319,14 @@ export class InteractionController {
   private handleAt(w: Point): HandleId | null {
     const b = this.renderer.selectionBounds()
     if (!b) return null
+    // Rotated selections hide their resize handles (rotate back to resize).
+    if (
+      this.editor
+        .getSelectedShapes()
+        .some((s) => s.type !== 'connector' && s.rotation)
+    ) {
+      return null
+    }
     const grab = this.renderer.worldPx(8)
     for (const [id, p] of Object.entries(this.renderer.handlePositions(b))) {
       if (Math.abs(w.x - p.x) <= grab && Math.abs(w.y - p.y) <= grab) {
@@ -541,6 +556,21 @@ export class InteractionController {
     if (stylus && !this.stylusManipulatesSelection(w)) {
       this.pauseInkTimer()
       this.session = { kind: 'draw', points: [w.x, w.y], tapSelects: true }
+      return
+    }
+
+    // Rotation handle on a lone selected shape.
+    const rotPos = this.renderer.rotationHandlePosition()
+    if (rotPos && Math.hypot(w.x - rotPos.x, w.y - rotPos.y) <= this.renderer.worldPx(9)) {
+      const shape = this.editor.getSelectedShapes()[0]
+      const c = { x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 }
+      const pointerAngle = Math.atan2(w.y - c.y, w.x - c.x)
+      this.session = {
+        kind: 'rotate',
+        id: shape.id,
+        center: c,
+        grabOffset: pointerAngle - (shape.rotation ?? 0),
+      }
       return
     }
 
@@ -852,6 +882,21 @@ export class InteractionController {
           color: this.editor.styleDefaults.fillColor,
         }
         this.renderer.redrawOverlay()
+        return
+      }
+      case 'rotate': {
+        const s = this.session
+        let angle = Math.atan2(w.y - s.center.y, w.x - s.center.x) - s.grabOffset
+        // Normalize, then click into 15-degree steps when close (within ~4).
+        const TAU = Math.PI * 2
+        angle = ((angle % TAU) + TAU) % TAU
+        if (angle > Math.PI) angle -= TAU
+        const step = Math.PI / 12
+        const nearest = Math.round(angle / step) * step
+        if (Math.abs(angle - nearest) < (4 * Math.PI) / 180) angle = nearest
+        this.editor.store.update(s.id, {
+          rotation: Math.abs(angle) < 1e-9 ? 0 : angle,
+        })
         return
       }
       case 'connect': {
@@ -1394,7 +1439,10 @@ export class InteractionController {
     else if (tool !== 'select') cursor = 'crosshair'
     else {
       const hit = this.topShapeAt(w)
-      if (this.arrowHandleHit(w)) cursor = 'crosshair'
+      const rotPos = this.renderer.rotationHandlePosition()
+      if (rotPos && Math.hypot(w.x - rotPos.x, w.y - rotPos.y) <= this.renderer.worldPx(9)) {
+        cursor = 'grab'
+      } else if (this.arrowHandleHit(w)) cursor = 'crosshair'
       else if (this.connectorEndpointAt(w)) cursor = 'crosshair'
       else {
         const handle = this.handleAt(w)

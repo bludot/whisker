@@ -23,6 +23,15 @@ export function GeoIcon({ kind, size = 16 }: { kind: GeoKind; size?: number }) {
         />
       </g>
     )
+  } else if (kind === 'pipe') {
+    body = (
+      <g {...common}>
+        <ellipse cx={size - pad - 2} cy={size / 2} rx={2} ry={s / 2 - 2} />
+        <path
+          d={`M${size - pad - 2} ${pad + 2}h-${s - 4}a2 ${s / 2 - 2} 0 0 0 0 ${s - 4}h${s - 4}`}
+        />
+      </g>
+    )
   } else {
     const outline = geoOutline(kind, s, kind === 'semicircle' ? s / 2 : s)
     const yOff = kind === 'semicircle' ? size / 4 : 0
