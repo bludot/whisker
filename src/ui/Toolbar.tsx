@@ -83,11 +83,18 @@ export function Toolbar({
   }
   const importWhisker = async (file: File) => {
     try {
-      const shapes = deserializeBoard(await file.text(), newShapeId)
+      const { shapes, skipped } = deserializeBoard(await file.text(), newShapeId)
       let z = editor.store.topZ()
       for (const s of shapes) editor.store.add({ ...s, z: ++z })
       editor.select(shapes.map((s) => s.id))
       renderer?.zoomToFit()
+      if (skipped > 0) {
+        window.alert(
+          `Imported ${shapes.length} shapes, but ${skipped} could not be ` +
+            'read. If this file came from a newer Whisker, refresh this ' +
+            'page to update and import again.',
+        )
+      }
     } catch (e) {
       window.alert(e instanceof Error ? e.message : String(e))
     }

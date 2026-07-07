@@ -238,11 +238,18 @@ export class InteractionController {
 
   private async importWhiskerFile(file: File): Promise<void> {
     try {
-      const shapes = deserializeBoard(await file.text(), newShapeId)
+      const { shapes, skipped } = deserializeBoard(await file.text(), newShapeId)
       let z = this.editor.store.topZ()
       for (const s of shapes) this.editor.store.add({ ...s, z: ++z })
       this.editor.select(shapes.map((s) => s.id))
       this.renderer.zoomToFit()
+      if (skipped > 0) {
+        window.alert(
+          `Imported ${shapes.length} shapes, but ${skipped} could not be ` +
+            'read. If this file came from a newer Whisker, refresh this ' +
+            'page to update and import again.',
+        )
+      }
     } catch (err) {
       window.alert(err instanceof Error ? err.message : String(err))
     }

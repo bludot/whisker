@@ -8,7 +8,10 @@ import type { Shape } from './types'
  */
 
 const FORMAT = 'whisker-board'
-const VERSION = 1
+// v2: the shape library replaced rect/ellipse with the generic geo type.
+// Bump on any change older builds would silently drop, so they show
+// their "made by a newer Whisker" error instead of eating shapes.
+const VERSION = 2
 
 const SHAPE_TYPES = new Set([
   'sticky',
@@ -34,7 +37,7 @@ export function serializeBoard(shapes: Shape[]): string {
 export function deserializeBoard(
   text: string,
   newId: () => string,
-): Shape[] {
+): { shapes: Shape[]; skipped: number } {
   let data: unknown
   try {
     data = JSON.parse(text)
@@ -51,7 +54,8 @@ export function deserializeBoard(
     )
   }
 
-  const candidates = (file.shapes as Shape[]).filter(
+  const all = file.shapes as Shape[]
+  const candidates = all.filter(
     (s) =>
       s &&
       typeof s === 'object' &&
@@ -75,5 +79,7 @@ export function deserializeBoard(
     }
     out.push(clone)
   }
-  return out
+  // Anything filtered or dropped is reported, never silently eaten — a
+  // partial import that looks complete is worse than an error.
+  return { shapes: out, skipped: all.length - out.length }
 }
