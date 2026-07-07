@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/ThatCatDev/whisker/compare/v1.0.3...v1.1.0) (2026-07-07)
+
+
+### Features
+
+* shape library with 18 shapes and a toolbar picker ([002da51](https://github.com/ThatCatDev/whisker/commit/002da510a709fe2dfce6091733cb1c1957221545))
+
 ## [1.0.3](https://github.com/bludot/whisker/compare/v1.0.2...v1.0.3) (2026-07-06)
 
 
