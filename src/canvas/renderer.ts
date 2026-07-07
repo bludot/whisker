@@ -22,6 +22,7 @@ import {
   boundsOf,
   boundsUnion,
   connectorEndpoints,
+  connectorMidpoint,
   connectorPath,
   denormalizedPoints,
   isResizable,
@@ -249,6 +250,17 @@ export class BoardRenderer {
     ]
   }
 
+  /** World position of the bend handle on a lone selected straight or
+   *  curved connector, or null. */
+  bendHandlePosition(): Point | null {
+    const selected = this.editor.getSelectedShapes()
+    if (selected.length !== 1 || selected[0].type !== 'connector') return null
+    const conn = selected[0]
+    if ((conn.route ?? 'straight') === 'elbow') return null
+    const get: ShapeResolver = (id) => this.editor.store.get(id)
+    return connectorMidpoint(conn, get)
+  }
+
   /** World position of the rotation handle: floats diagonally off the
    *  bottom-right corner of a lone selected shape (rotating with it), or
    *  null. Bottom-right stays clear of the style popup (above), the
@@ -336,14 +348,22 @@ export class BoardRenderer {
       })
     }
 
-    // Draggable endpoint handles on a lone selected connector.
+    // Draggable endpoint handles on a lone selected connector, plus a
+    // bend handle at the midpoint (straight and curve routes).
     if (selected.length === 1 && selected[0].type === 'connector') {
-      const { a, b } = connectorEndpoints(selected[0], get)
+      const conn = selected[0]
+      const { a, b } = connectorEndpoints(conn, get)
       const r = this.worldPx(5)
       for (const p of [a, b]) {
         o.circle(p.x, p.y, r)
           .fill(0xffffff)
           .stroke({ color: ACCENT, width: thin })
+      }
+      const bend = this.bendHandlePosition()
+      if (bend) {
+        o.circle(bend.x, bend.y, this.worldPx(4.5))
+          .fill(ACCENT)
+          .stroke({ color: 0xffffff, width: thin })
       }
     }
 

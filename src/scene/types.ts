@@ -118,6 +118,10 @@ export interface ConnectorShape extends ShapeBase, Partial<ConnectorStyleProps> 
   endPoint: Point | null
   startAnchor?: Point | null
   endAnchor?: Point | null
+  /** Manual bow set by dragging the bend handle: signed perpendicular
+   *  offset (world px) of the curve's midpoint from the straight chord.
+   *  Absent/null = automatic (tangent-derived) curvature. */
+  curvature?: number | null
 }
 
 export type Shape =
@@ -363,17 +367,31 @@ export function connectorPath(c: ConnectorShape, get: ShapeResolver): Point[] {
     const len = Math.hypot(b.x - a.x, b.y - a.y)
     if (len < 2) return [a, b]
     const d = { x: (b.x - a.x) / len, y: (b.y - a.y) / len }
+    const manual = c.curvature ?? null
     // How much each end must turn away from the direct line (0 = aligned).
     const misA = (1 - (ta.x * d.x + ta.y * d.y)) / 2
     const misB = (1 - (tb.x * -d.x + tb.y * -d.y)) / 2
     // Straight already looks right — asking for "curvy" shouldn't bend a
-    // line that has no reason to bend.
-    if (Math.max(misA, misB) < 0.02) return [a, b]
+    // line that has no reason to bend. A hand-flattened curve stays flat.
+    if (manual === null && Math.max(misA, misB) < 0.02) return [a, b]
+    if (manual !== null && Math.abs(manual) < 2 && Math.max(misA, misB) < 0.02)
+      return [a, b]
     const reach = Math.min(len * 0.5, 180)
     const ha = reach * (0.2 + 0.8 * misA)
     const hb = reach * (0.2 + 0.8 * misB)
-    const p1 = { x: a.x + ta.x * ha, y: a.y + ta.y * ha }
-    const p2 = { x: b.x + tb.x * hb, y: b.y + tb.y * hb }
+    let p1 = { x: a.x + ta.x * ha, y: a.y + ta.y * ha }
+    let p2 = { x: b.x + tb.x * hb, y: b.y + tb.y * hb }
+    if (manual !== null) {
+      // Both controls shift by v so the curve midpoint lands `manual` px
+      // off the chord: B(1/2) moves by 3/4 of the control displacement.
+      const perp = { x: -d.y, y: d.x }
+      const auto =
+        (perp.x * (p1.x + p2.x - a.x - b.x) + perp.y * (p1.y + p2.y - a.y - b.y)) *
+        (3 / 8)
+      const v = (manual - auto) / 0.75
+      p1 = { x: p1.x + perp.x * v, y: p1.y + perp.y * v }
+      p2 = { x: p2.x + perp.x * v, y: p2.y + perp.y * v }
+    }
     const pts: Point[] = []
     const STEPS = 32
     for (let i = 0; i <= STEPS; i++) {
@@ -387,6 +405,15 @@ export function connectorPath(c: ConnectorShape, get: ShapeResolver): Point[] {
     return pts
   }
   return [a, b]
+}
+
+/** Midpoint of a connector's drawn path (where the bend handle sits). */
+export function connectorMidpoint(c: ConnectorShape, get: ShapeResolver): Point {
+  const pts = connectorPath(c, get)
+  if (pts.length === 2) {
+    return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 }
+  }
+  return pts[Math.floor(pts.length / 2)]
 }
 
 export function denormalizedPoints(d: DrawShape): number[] {
