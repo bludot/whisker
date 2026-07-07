@@ -118,14 +118,17 @@ export interface ConnectorShape extends ShapeBase, Partial<ConnectorStyleProps> 
   endPoint: Point | null
   startAnchor?: Point | null
   endAnchor?: Point | null
-  /** Manual bow set by dragging the bend handle: signed perpendicular
-   *  offset (world px) of the curve's midpoint from the straight chord.
-   *  Absent/null = automatic (tangent-derived) curvature. */
+  /** Legacy single-offset bend fields (pre-waypoints); normalized into
+   *  `waypoints` on read. */
   curvature?: number | null
-  /** Extra bend offsets at the quarter points, unlocked once the middle
-   *  bend is set (their handles appear left and right of it). */
   bendQ1?: number | null
   bendQ3?: number | null
+  /** User-sculpted via-points, in chord coordinates: `u` along the
+   *  start→end chord (0..1), `v` px perpendicular to it. The curve is a
+   *  spline through them; each drag of a between-segment handle inserts
+   *  one more. Chord coordinates make the sculpted path follow the
+   *  shapes when they move. */
+  waypoints?: { u: number; v: number }[] | null
 }
 
 export type Shape =
@@ -371,29 +374,21 @@ export function connectorPath(c: ConnectorShape, get: ShapeResolver): Point[] {
     const len = Math.hypot(b.x - a.x, b.y - a.y)
     if (len < 2) return [a, b]
     const d = { x: (b.x - a.x) / len, y: (b.y - a.y) / len }
-    const manual = c.curvature ?? null
+    const ways = c.waypoints ?? null
     // How much each end must turn away from the direct line (0 = aligned).
     const misA = (1 - (ta.x * d.x + ta.y * d.y)) / 2
     const misB = (1 - (tb.x * -d.x + tb.y * -d.y)) / 2
     // Straight already looks right — asking for "curvy" shouldn't bend a
     // line that has no reason to bend. A hand-flattened curve stays flat.
-    if (manual === null && Math.max(misA, misB) < 0.02) return [a, b]
+    if (!ways?.length && Math.max(misA, misB) < 0.02) return [a, b]
 
-    if (manual !== null) {
-      // Hand-bent: a spline through the dragged bend points. The quarter
-      // bends (if touched) add detail left and right of the middle one.
-      const points: Point[] = [a]
-      if (c.bendQ1 != null) points.push(bendPointOnChord(a, b, 0.25, c.bendQ1))
-      points.push(bendPointOnChord(a, b, 0.5, manual))
-      if (c.bendQ3 != null) points.push(bendPointOnChord(a, b, 0.75, c.bendQ3))
-      points.push(b)
-      const flat =
-        points.every((p, i) => {
-          if (i === 0 || i === points.length - 1) return true
-          const k = perpOffset(a, b, p)
-          return Math.abs(k) < 2
-        }) && Math.max(misA, misB) < 0.02
-      if (flat) return [a, b]
+    if (ways?.length) {
+      // Hand-sculpted: a spline through the dragged via-points.
+      const points: Point[] = [
+        a,
+        ...ways.map((wp) => bendPointOnChord(a, b, wp.u, wp.v)),
+        b,
+      ]
       return catmullRomThrough(points, ta, tb)
     }
 

@@ -16,7 +16,6 @@ import {
   denormalizedPoints,
   hitTest,
   isCenterAnchor,
-  perpOffset,
   MIN_SIZE,
   pointOnShape,
   STROKE_BREAK,
@@ -60,7 +59,7 @@ type Session =
       tapSelects?: boolean
     }
   | { kind: 'create'; type: 'sticky' | GeoKind; startW: Point }
-  | { kind: 'bend'; id: ShapeId; which: 'q1' | 'mid' | 'q3' }
+  | { kind: 'bend'; id: ShapeId; index: number }
   | {
       kind: 'rotate'
       id: ShapeId
@@ -87,6 +86,16 @@ const HANDLE_CURSORS: Record<HandleId, string> = {
   s: 'ns-resize',
   e: 'ew-resize',
   w: 'ew-resize',
+}
+
+/** Express a world point in a chord's (u along, v perpendicular) frame. */
+function chordCoords(a: Point, b: Point, w: Point): { u: number; v: number } {
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
+  const dir = { x: (b.x - a.x) / len, y: (b.y - a.y) / len }
+  const perp = { x: -dir.y, y: dir.x }
+  const u = ((w.x - a.x) * dir.x + (w.y - a.y) * dir.y) / len
+  const v = (w.x - a.x) * perp.x + (w.y - a.y) * perp.y
+  return { u: Math.min(0.95, Math.max(0.05, u)), v }
 }
 
 const TOOL_KEYS: Record<string, Tool> = {
@@ -481,14 +490,20 @@ export class InteractionController {
     this.editor.setSessionActive(this.session.kind !== 'none')
   }
 
-  /** Which bend handle (if any) is under the pointer. */
-  private bendHandleAt(w: Point): 'q1' | 'mid' | 'q3' | null {
-    for (const { which, p } of this.renderer.bendHandlePositions()) {
-      if (Math.hypot(w.x - p.x, w.y - p.y) <= this.renderer.worldPx(9)) {
-        return which
+  /** Which bend handle (if any) is under the pointer. Via-point dots win
+   *  over spawn dots when they overlap. */
+  private bendHandleAt(
+    w: Point,
+  ): { kind: 'way' | 'spawn'; index: number } | null {
+    const handles = this.renderer.bendHandlePositions()
+    let hit: { kind: 'way' | 'spawn'; index: number } | null = null
+    for (const h of handles) {
+      if (Math.hypot(w.x - h.p.x, w.y - h.p.y) <= this.renderer.worldPx(9)) {
+        if (h.kind === 'way') return { kind: h.kind, index: h.index }
+        hit ??= { kind: h.kind, index: h.index }
       }
     }
-    return null
+    return hit
   }
 
   /** Endpoint of the single selected connector under the pointer, if any. */
@@ -571,15 +586,23 @@ export class InteractionController {
       return
     }
 
-    // Bend handles on a lone selected connector.
+    // Bend handles on a lone selected connector. Grabbing a spawn dot
+    // inserts a fresh via-point right there and drags it.
     const bendHit = this.bendHandleAt(w)
     if (bendHit) {
-      this.session = {
-        kind: 'bend',
-        id: this.editor.getSelectedShapes()[0].id,
-        which: bendHit,
+      const conn = this.editor.getSelectedShapes()[0]
+      if (conn.type === 'connector') {
+        let index = bendHit.index
+        if (bendHit.kind === 'spawn') {
+          const get = (id: ShapeId) => this.editor.store.get(id)
+          const { a, b } = connectorEndpoints(conn, get)
+          const ways = [...(conn.waypoints ?? [])]
+          ways.splice(index, 0, chordCoords(a, b, w))
+          this.editor.store.update(conn.id, { route: 'curve', waypoints: ways })
+        }
+        this.session = { kind: 'bend', id: conn.id, index }
+        return
       }
-      return
     }
 
     // Rotation handle on a lone selected shape.
@@ -912,15 +935,17 @@ export class InteractionController {
         if (!conn || conn.type !== 'connector') return
         const get = (id: ShapeId) => this.editor.store.get(id)
         const { a, b } = connectorEndpoints(conn, get)
-        const len = Math.hypot(b.x - a.x, b.y - a.y)
-        if (len < 2) return
-        let k = perpOffset(a, b, w)
-        if (Math.abs(k) < this.renderer.worldPx(4)) k = 0 // click into flat
-        const patch: Record<string, unknown> = { route: 'curve' }
-        if (this.session.which === 'mid') patch.curvature = k
-        else if (this.session.which === 'q1') patch.bendQ1 = k
-        else patch.bendQ3 = k
-        this.editor.store.update(this.session.id, patch)
+        if (Math.hypot(b.x - a.x, b.y - a.y) < 2) return
+        const ways = [...(conn.waypoints ?? [])]
+        if (this.session.index >= ways.length) return
+        const wp = chordCoords(a, b, w)
+        // Near the chord, click flat (a hand-straightened wave).
+        if (Math.abs(wp.v) < this.renderer.worldPx(4)) wp.v = 0
+        ways[this.session.index] = wp
+        this.editor.store.update(this.session.id, {
+          route: 'curve',
+          waypoints: ways,
+        })
         return
       }
       case 'rotate': {
@@ -1450,13 +1475,22 @@ export class InteractionController {
     if (this.inkBuffer) return
     if (this.editor.tool !== 'select') return
     const w = this.world(e)
-    // Double-click any bend handle: back to automatic curvature.
-    if (this.bendHandleAt(w)) {
-      this.editor.store.update(this.editor.getSelectedShapes()[0].id, {
-        curvature: null,
-        bendQ1: null,
-        bendQ3: null,
-      })
+    // Double-click a via-point: remove it (last one restores automatic).
+    const bendHit = this.bendHandleAt(w)
+    if (bendHit) {
+      if (bendHit.kind === 'way') {
+        const conn = this.editor.getSelectedShapes()[0]
+        if (conn.type === 'connector') {
+          const ways = [...(conn.waypoints ?? [])]
+          ways.splice(bendHit.index, 1)
+          this.editor.store.update(conn.id, {
+            waypoints: ways.length ? ways : null,
+            curvature: null,
+            bendQ1: null,
+            bendQ3: null,
+          })
+        }
+      }
       return
     }
     const hit = this.topShapeAt(w)

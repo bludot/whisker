@@ -40,6 +40,21 @@ function normalizeShape(raw: Record<string, unknown>): Shape {
     ;(s as { geo?: string }).geo ??= 'rect'
   }
   if (s.type === 'connector') {
+    // Pre-waypoint bends (single perpendicular offsets at fixed spots)
+    // become equivalent via-points.
+    const legacy = s as {
+      curvature?: number | null
+      bendQ1?: number | null
+      bendQ3?: number | null
+      waypoints?: { u: number; v: number }[] | null
+    }
+    if (legacy.waypoints == null && legacy.curvature != null) {
+      const ways: { u: number; v: number }[] = []
+      if (legacy.bendQ1 != null) ways.push({ u: 0.25, v: legacy.bendQ1 })
+      ways.push({ u: 0.5, v: legacy.curvature })
+      if (legacy.bendQ3 != null) ways.push({ u: 0.75, v: legacy.bendQ3 })
+      legacy.waypoints = ways
+    }
     s.route ??= 'straight'
     s.dash ??= 'solid'
     s.startHead ??= 'none'

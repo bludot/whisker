@@ -251,33 +251,44 @@ export class BoardRenderer {
     ]
   }
 
-  /** Bend handles on a lone selected straight or curved connector. The
-   *  middle handle always shows; once it has been dragged, two more
-   *  appear at the quarter points for finer bending. Empty when hidden. */
-  bendHandlePositions(): { which: 'q1' | 'mid' | 'q3'; p: Point }[] {
+  /** Bend handles on a lone selected straight or curved connector.
+   *  Every sculpted via-point gets a dot, and each path segment between
+   *  anchors gets a spawn dot at its middle — dragging a spawn dot
+   *  inserts a new via-point there, so bends subdivide indefinitely.
+   *  `index`: for 'way' the waypoint's position in the list; for 'spawn'
+   *  the list position a new waypoint would be inserted at. */
+  bendHandlePositions(): {
+    kind: 'way' | 'spawn'
+    index: number
+    p: Point
+  }[] {
     const selected = this.editor.getSelectedShapes()
     if (selected.length !== 1 || selected[0].type !== 'connector') return []
     const conn = selected[0]
     if ((conn.route ?? 'straight') === 'elbow') return []
     const get: ShapeResolver = (id) => this.editor.store.get(id)
-    const manual = conn.curvature ?? null
-    if (manual === null) {
-      return [{ which: 'mid', p: connectorMidpoint(conn, get) }]
+    const ways = conn.waypoints ?? []
+    if (ways.length === 0) {
+      return [{ kind: 'spawn', index: 0, p: connectorMidpoint(conn, get) }]
     }
     const { a, b } = connectorEndpoints(conn, get)
+    const out: { kind: 'way' | 'spawn'; index: number; p: Point }[] = []
     const path = connectorPath(conn, get)
-    const sample = (f: number) => path[Math.round((path.length - 1) * f)]
-    return [
-      {
-        which: 'q1',
-        p: conn.bendQ1 != null ? bendPointOnChord(a, b, 0.25, conn.bendQ1) : sample(0.25),
-      },
-      { which: 'mid', p: bendPointOnChord(a, b, 0.5, manual) },
-      {
-        which: 'q3',
-        p: conn.bendQ3 != null ? bendPointOnChord(a, b, 0.75, conn.bendQ3) : sample(0.75),
-      },
-    ]
+    // catmullRomThrough samples 16 points per segment: segment i spans
+    // path indices [i*16, (i+1)*16], so its midpoint is at i*16 + 8.
+    const SEG = 16
+    for (let i = 0; i <= ways.length; i++) {
+      const idx = i * SEG + SEG / 2
+      if (idx < path.length) out.push({ kind: 'spawn', index: i, p: path[idx] })
+      if (i < ways.length) {
+        out.push({
+          kind: 'way',
+          index: i,
+          p: bendPointOnChord(a, b, ways[i].u, ways[i].v),
+        })
+      }
+    }
+    return out
   }
 
   /** World position of the rotation handle: floats diagonally off the
@@ -378,10 +389,16 @@ export class BoardRenderer {
           .fill(0xffffff)
           .stroke({ color: ACCENT, width: thin })
       }
-      for (const { which, p } of this.bendHandlePositions()) {
-        o.circle(p.x, p.y, this.worldPx(which === 'mid' ? 4.5 : 3.5))
-          .fill(ACCENT)
-          .stroke({ color: 0xffffff, width: thin })
+      for (const h of this.bendHandlePositions()) {
+        if (h.kind === 'way') {
+          o.circle(h.p.x, h.p.y, this.worldPx(4.5))
+            .fill(ACCENT)
+            .stroke({ color: 0xffffff, width: thin })
+        } else {
+          o.circle(h.p.x, h.p.y, this.worldPx(3.5))
+            .fill({ color: 0xffffff, alpha: 0.9 })
+            .stroke({ color: ACCENT, width: thin })
+        }
       }
     }
 
