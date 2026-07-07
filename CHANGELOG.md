@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/ThatCatDev/whisker/compare/v1.4.0...v1.4.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* Miro-style curve tangents ([8b13884](https://github.com/ThatCatDev/whisker/commit/8b13884667d6bf85374fccad5d4df6d6cd841fe0))
+
 # [1.4.0](https://github.com/ThatCatDev/whisker/compare/v1.3.0...v1.4.0) (2026-07-07)
 
 
