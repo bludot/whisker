@@ -3,6 +3,8 @@ import { BoardRenderer } from './renderer'
 import { InteractionController } from './interactions'
 import {
   canHaveText,
+  connectorMidpoint,
+  type ConnectorShape,
   type GeoShape,
   type StickyShape,
 } from '../scene/types'
@@ -84,6 +86,47 @@ function TextEditorOverlay({
   )
 }
 
+/** Small centered editor for a connector's midpoint label. */
+function ConnectorLabelEditor({
+  shape,
+  zoom,
+  pos,
+  onCommit,
+}: {
+  shape: ConnectorShape
+  zoom: number
+  pos: { x: number; y: number }
+  onCommit: (text: string) => void
+}) {
+  const width = 220 * zoom
+  const height = 60 * zoom
+  return (
+    <textarea
+      className="text-editor connector-label-editor"
+      defaultValue={shape.text ?? ''}
+      autoFocus
+      spellCheck={false}
+      style={{
+        left: pos.x - width / 2,
+        top: pos.y - height / 2,
+        width,
+        height,
+        fontSize: (shape.fontSize ?? 14) * zoom,
+        fontWeight: shape.bold ? 700 : 400,
+        textAlign: 'center',
+        paddingTop: (60 / 2 - (shape.fontSize ?? 14) * 0.65) * zoom,
+      }}
+      onBlur={(e) => onCommit(e.currentTarget.value)}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey)) {
+          e.currentTarget.blur()
+        }
+      }}
+    />
+  )
+}
+
 /**
  * Mounts the Pixi renderer and interaction controller. React renders this
  * div once; everything inside it is owned by Pixi — except the text-edit
@@ -138,6 +181,17 @@ export function CanvasHost({ editor, onRenderer }: Props) {
         shape={editing}
         zoom={renderer.camera.zoom}
         pos={renderer.camera.worldToScreen(editing.x, editing.y)}
+        onCommit={(text) => editor.commitTextEdit(text)}
+      />
+    )
+  } else if (editing && editing.type === 'connector' && renderer) {
+    const mid = connectorMidpoint(editing, (id) => editor.store.get(id))
+    overlay = (
+      <ConnectorLabelEditor
+        key={editing.id}
+        shape={editing}
+        zoom={renderer.camera.zoom}
+        pos={renderer.camera.worldToScreen(mid.x, mid.y)}
         onCommit={(text) => editor.commitTextEdit(text)}
       />
     )

@@ -71,7 +71,9 @@ the roadmap).
 | Edit text         | double-click a sticky/rect/ellipse; `Esc`/`Ctrl+Enter` done |
 | Style             | select shapes → context bar chips open popovers: fill, border, text, arrow style |
 | Z-order           | Order popover, or `]`/`[` step forward/back, `Shift+]`/`Shift+[` to front/back |
-| Arrow styles      | select an arrow → straight/elbow/curved, solid/dashed/dotted, per-end caps (none/arrow/dot); drag the midpoint dot to bend the curve by hand, double-click it to go back to automatic |
+| Arrow styles      | select an arrow → straight/elbow/curved, solid/dashed/dotted, per-end caps (none/arrow/dot) |
+| Bend arrows       | drag an arrow's midpoint dot anywhere — two more dots appear beside it, subdividing forever; double-click a dot to remove it |
+| Arrow labels      | double-click an arrow to type a label on the line            |
 | Text formatting   | select a shape → align, vertical align, size, bold (defaults centered) |
 | Align / distribute| in the selection popup with 2+ / 3+ shapes                 |
 | Snap              | shapes snap to others' edges/centers and to equal spacing (gap guides) while dragging; hold `Alt` to disable |

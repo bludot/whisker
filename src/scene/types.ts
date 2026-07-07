@@ -110,8 +110,13 @@ export interface ConnectorStyleProps {
  *  When attached, an anchor stores WHERE on the shape (normalized 0..1
  *  coords). A center anchor — or none — floats: the arrow leaves from
  *  whichever edge faces the other end. Any other anchor is pinned. */
-export interface ConnectorShape extends ShapeBase, Partial<ConnectorStyleProps> {
+export interface ConnectorShape
+  extends ShapeBase,
+    Partial<ConnectorStyleProps>,
+    Partial<TextStyleProps> {
   type: 'connector'
+  /** Label drawn on a chip at the path midpoint. */
+  text?: string
   startId: ShapeId | null
   endId: ShapeId | null
   startPoint: Point | null
@@ -433,7 +438,9 @@ export function perpOffset(a: Point, b: Point, p: Point): number {
 }
 
 /** Smooth spline through the given points; end tangents follow the
- *  connector's exit directions. Uniform Catmull-Rom, sampled. */
+ *  connector's exit directions. Centripetal Catmull-Rom (alpha 0.5) —
+ *  unlike the uniform variant it can't overshoot or kink around
+ *  unevenly spaced via-points. */
 function catmullRomThrough(points: Point[], ta: Point, tb: Point): Point[] {
   const first = points[0]
   const last = points[points.length - 1]
@@ -443,18 +450,30 @@ function catmullRomThrough(points: Point[], ta: Point, tb: Point): Point[] {
     last.y - points[points.length - 2].y,
   )
   // Phantom points beyond each end shape the exit tangents.
-  const pre = { x: first.x - ta.x * d0, y: first.y - ta.y * d0 }
-  const post = { x: last.x - tb.x * dn, y: last.y - tb.y * dn }
+  const pre = { x: first.x - ta.x * d0 * 0.5, y: first.y - ta.y * d0 * 0.5 }
+  const post = { x: last.x - tb.x * dn * 0.5, y: last.y - tb.y * dn * 0.5 }
   const P = [pre, ...points, post]
   const out: Point[] = []
   const SEG_STEPS = 16
+  const dist = (p: Point, q: Point) =>
+    Math.max(1e-3, Math.hypot(q.x - p.x, q.y - p.y) ** 0.5)
   for (let i = 1; i + 2 < P.length; i++) {
     const p0 = P[i - 1]
     const p1 = P[i]
     const p2 = P[i + 1]
     const p3 = P[i + 2]
-    const m1 = { x: (p2.x - p0.x) / 2, y: (p2.y - p0.y) / 2 }
-    const m2 = { x: (p3.x - p1.x) / 2, y: (p3.y - p1.y) / 2 }
+    const d01 = dist(p0, p1)
+    const d12 = dist(p1, p2)
+    const d23 = dist(p2, p3)
+    // Centripetal tangents (Hermite form).
+    const m1 = {
+      x: ((p1.x - p0.x) / d01 - (p2.x - p0.x) / (d01 + d12) + (p2.x - p1.x) / d12) * d12,
+      y: ((p1.y - p0.y) / d01 - (p2.y - p0.y) / (d01 + d12) + (p2.y - p1.y) / d12) * d12,
+    }
+    const m2 = {
+      x: ((p2.x - p1.x) / d12 - (p3.x - p1.x) / (d12 + d23) + (p3.x - p2.x) / d23) * d12,
+      y: ((p2.y - p1.y) / d12 - (p3.y - p1.y) / (d12 + d23) + (p3.y - p2.y) / d23) * d12,
+    }
     const from = i === 1 ? 0 : 1
     for (let j = from; j <= SEG_STEPS; j++) {
       const t = j / SEG_STEPS

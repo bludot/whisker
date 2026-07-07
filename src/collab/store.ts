@@ -59,6 +59,9 @@ function normalizeShape(raw: Record<string, unknown>): Shape {
     s.dash ??= 'solid'
     s.startHead ??= 'none'
     s.endHead ??= 'arrow'
+    s.text ??= ''
+    s.fontSize ??= 14
+    s.bold ??= false
   }
   return s
 }

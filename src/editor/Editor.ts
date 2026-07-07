@@ -372,7 +372,7 @@ export class Editor {
 
   beginTextEdit(id: ShapeId): void {
     const s = this.store.get(id)
-    if (!s || !canHaveText(s)) return
+    if (!s || (!canHaveText(s) && s.type !== 'connector')) return
     this.editingId = id
     this.notify()
   }

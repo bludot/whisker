@@ -697,7 +697,45 @@ function buildShape(
       break
     }
     case 'connector': {
-      drawConnector(g, connectorPath(shape, get), shape)
+      const path = connectorPath(shape, get)
+      drawConnector(g, path, shape)
+      if (shape.text && shape.id !== editingId) {
+        const mid =
+          path.length === 2
+            ? {
+                x: (path[0].x + path[1].x) / 2,
+                y: (path[0].y + path[1].y) / 2,
+              }
+            : path[Math.floor(path.length / 2)]
+        const fontSize = shape.fontSize ?? 14
+        const bg = CANVAS_COLORS[effectiveTheme()].background
+        const label = new Text({
+          text: shape.text,
+          style: {
+            fontFamily: 'system-ui, sans-serif',
+            fontSize,
+            lineHeight: fontSize * 1.3,
+            fontWeight: shape.bold ? '700' : '400',
+            fill: labelColor(bg, 1),
+            align: 'center',
+          },
+        })
+        label.anchor.set(0.5, 0.5)
+        label.position.set(mid.x, mid.y)
+        // A chip of canvas background keeps the line from striking
+        // through the text.
+        const chip = new Graphics()
+        chip
+          .roundRect(
+            mid.x - label.width / 2 - 8,
+            mid.y - label.height / 2 - 4,
+            label.width + 16,
+            label.height + 8,
+            6,
+          )
+          .fill({ color: bg, alpha: 0.92 })
+        node.addChild(chip, label)
+      }
       break
     }
     case 'image': {

@@ -619,3 +619,8 @@ body,
   grid-template-columns: repeat(6, 36px);
   gap: 2px;
 }
+
+.connector-label-editor {
+  background: var(--page-bg);
+  border-radius: 6px;
+}

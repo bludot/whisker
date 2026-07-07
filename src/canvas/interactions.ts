@@ -1477,24 +1477,22 @@ export class InteractionController {
     const w = this.world(e)
     // Double-click a via-point: remove it (last one restores automatic).
     const bendHit = this.bendHandleAt(w)
-    if (bendHit) {
-      if (bendHit.kind === 'way') {
-        const conn = this.editor.getSelectedShapes()[0]
-        if (conn.type === 'connector') {
-          const ways = [...(conn.waypoints ?? [])]
-          ways.splice(bendHit.index, 1)
-          this.editor.store.update(conn.id, {
-            waypoints: ways.length ? ways : null,
-            curvature: null,
-            bendQ1: null,
-            bendQ3: null,
-          })
-        }
+    if (bendHit?.kind === 'way') {
+      const conn = this.editor.getSelectedShapes()[0]
+      if (conn.type === 'connector') {
+        const ways = [...(conn.waypoints ?? [])]
+        ways.splice(bendHit.index, 1)
+        this.editor.store.update(conn.id, {
+          waypoints: ways.length ? ways : null,
+          curvature: null,
+          bendQ1: null,
+          bendQ3: null,
+        })
       }
       return
     }
     const hit = this.topShapeAt(w)
-    if (hit && canHaveText(hit)) {
+    if (hit && (canHaveText(hit) || hit.type === 'connector')) {
       this.editor.select([hit.id])
       this.editor.beginTextEdit(hit.id)
     }
