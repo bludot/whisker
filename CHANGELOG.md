@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/ThatCatDev/whisker/compare/v1.4.1...v1.5.0) (2026-07-07)
+
+
+### Features
+
+* progressive multi-point connector bending ([feb73b1](https://github.com/ThatCatDev/whisker/commit/feb73b1c1e5f12e582ff28771f22e577eff12901))
+
 ## [1.4.1](https://github.com/ThatCatDev/whisker/compare/v1.4.0...v1.4.1) (2026-07-07)
 
 
