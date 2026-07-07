@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/ThatCatDev/whisker/compare/v1.6.0...v1.7.0) (2026-07-07)
+
+
+### Features
+
+* connector labels and smoother sculpted curves ([eb36637](https://github.com/ThatCatDev/whisker/commit/eb36637709b499d6ff6fffcbbc3e5787e09bc057))
+
 # [1.6.0](https://github.com/ThatCatDev/whisker/compare/v1.5.0...v1.6.0) (2026-07-07)
 
 
